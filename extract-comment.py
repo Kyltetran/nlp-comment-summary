@@ -1,12 +1,14 @@
 import googleapiclient.discovery
-
-# Replace with your own API Key and Video ID
-API_KEY = 'AIzaSyDj7I12G6kpxEt4esWYXh2XwVAOXu7mbz0'
-VIDEO_ID = 'LAS33IPqhJE'
-OUTPUT_FILE = 'youtube_comments_6_LAS33IPqhJE.txt'
+import argparse
+from langchain.schema.document import Document
+from langchain_chroma import Chroma
+from get_embedding_function import get_embedding_function
+import shutil
+import os
 
 
 def get_comments(video_id, api_key):
+    """Fetch comments from YouTube (excluding replies)."""
     # Create a YouTube API client
     youtube = googleapiclient.discovery.build(
         'youtube', 'v3', developerKey=api_key)
@@ -26,7 +28,7 @@ def get_comments(video_id, api_key):
         )
         response = request.execute()
 
-        # Extract comments from the response
+        # Extract only top-level comments
         for item in response.get('items', []):
             comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
             author = item['snippet']['topLevelComment']['snippet']['authorDisplayName']
@@ -40,16 +42,50 @@ def get_comments(video_id, api_key):
     return comments
 
 
-def save_comments_to_file(comments, filename):
-    with open(filename, 'w', encoding='utf-8') as file:
-        for idx, comment in enumerate(comments, start=1):
-            file.write(
-                f"{idx}. {comment['author']}:\n{comment['comment']}\n\n")
-    print(f"Comments saved to {filename}")
+def save_comments_to_chroma(comments):
+    """Populate comments into Chroma database, clearing previous data."""
+    # Remove the existing Chroma directory (this will clear all data)
+    if os.path.exists("chroma"):
+        # This will remove the entire 'chroma' directory
+        shutil.rmtree("chroma")
+
+    # Prepare the Chroma database
+    db = Chroma(persist_directory="chroma",
+                embedding_function=get_embedding_function())
+
+    # Create Document objects for each top-level comment
+    documents = []
+    for idx, comment in enumerate(comments, start=1):
+        content = f"{comment['author']}:\n{comment['comment']}"
+
+        # No parent_id needed since we are only dealing with top-level comments
+        document = Document(page_content=content, metadata={
+                            "source": f"Comment {idx}"})
+        documents.append(document)
+
+    # Add new documents to Chroma
+    db.add_documents(documents)
+    print(f"Added {len(documents)} comments to Chroma.")
 
 
-# Get comments
-comments = get_comments(VIDEO_ID, API_KEY)
+def main():
+    """Main function to fetch comments and save them to Chroma."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("youtube_url", type=str,
+                        help="YouTube URL to extract comments from")
+    args = parser.parse_args()
 
-# Save to file
-save_comments_to_file(comments, OUTPUT_FILE)
+    # Extract the video ID from the URL
+    youtube_url = args.youtube_url
+    video_id = youtube_url.split("v=")[-1]
+
+    # Replace with your actual API key
+    API_KEY = 'AIzaSyDj7I12G6kpxEt4esWYXh2XwVAOXu7mbz0'
+    comments = get_comments(video_id, API_KEY)
+
+    # Save comments to Chroma
+    save_comments_to_chroma(comments)
+
+
+if __name__ == "__main__":
+    main()
