@@ -26,7 +26,7 @@ def query_rag(query_text: str):
 
     # Search the DB
     results = db.similarity_search_with_score(
-        query_text, k=200)  # Increase k to get more results (more text)
+        query_text, k=2000)  # Increase k to get more results (more text)
 
     # Prepare the context text from the search results
     context_text = "\n\n---\n\n".join(
