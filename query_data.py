@@ -10,11 +10,8 @@ CHROMA_PATH = "chroma"
 
 PROMPT_TEMPLATE = """
 Answer the question below based on the context provided:
-
 {context}
-
 ---
-
 You are a YouTube comment summarizer. You can summarize the comments provided with insightful and informative analysis. You can also answer the questions relating to that video comments: {question}.
 """
 
