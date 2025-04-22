@@ -1,2 +1,2 @@
 To run the code:
-python youtube_summary_tool.py "link YouTube"
+python app.py
