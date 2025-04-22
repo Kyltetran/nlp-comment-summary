@@ -9,31 +9,33 @@ import os
 CHROMA_PATH = "chroma"
 
 PROMPT_TEMPLATE = """
-Answer the question below based on the context provided:
+You are a YouTube comment summarizer. Below is a collection of user comments extracted from a video.
 
 {context}
 
 ---
 
-You are a YouTube comment summarizer. You can summarize the comments provided with insightful and informative analysis. You can also answer the questions relating to that video comments: {question}.
+Please write a summary highlighting the key points and general sentiment expressed in these comments.
+Focus on providing a well-rounded overview in less than 5 paragraphs.
 """
 
 
-def query_rag(query_text: str):
-    # Prepare the DB
+def query_rag():
+    # Load the Chroma vector store
     db = Chroma(persist_directory=CHROMA_PATH,
                 embedding_function=get_embedding_function())
 
-    # Search the DB
+    # Retrieve relevant documents
     results = db.similarity_search_with_score(
-        query_text, k=2000)  # Increase k to get more results (more text)
+        "summarize youtube comments", k=2000)
 
-    # Prepare the context text from the search results
+    # Build context string from retrieved documents
     context_text = "\n\n---\n\n".join(
         [doc.page_content for doc, _score in results])
 
+    # Format prompt with context
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(context=context_text, question=query_text)
+    prompt = prompt_template.format(context=context_text)
 
     print("Prompt sent to model:")
     print(prompt)
@@ -59,9 +61,12 @@ def query_rag(query_text: str):
 
 # Directly handle arguments without the need for a separate main function
 if __name__ == "__main__":
-    # Create CLI
     parser = argparse.ArgumentParser()
-    parser.add_argument("query_text", type=str, help="The query text.")
+    parser.add_argument(
+        "--task", type=str, default="summarize",
+        help="Trigger the summarization task (default: summarize)"
+    )
     args = parser.parse_args()
-    query_text = args.query_text
-    query_rag(query_text)
+
+    if args.task == "summarize":
+        query_rag()
