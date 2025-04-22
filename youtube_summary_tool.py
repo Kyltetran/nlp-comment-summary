@@ -1,3 +1,4 @@
+import matplotlib
 import googleapiclient.discovery
 import argparse
 import os
@@ -278,6 +279,12 @@ def analyze_sentiment(comments):
     return results, comments_positive, comments_negative, comments_neutral
 
 
+matplotlib.use('Agg')
+plt.ioff()  # Turn off interactive mode
+
+# Then modify your plot_sentiment_pie_chart function to not show the plot:
+
+
 def plot_sentiment_pie_chart(results):
     """Create a pie chart of sentiment distribution."""
     # Get the counts for each sentiment category
@@ -294,11 +301,14 @@ def plot_sentiment_pie_chart(results):
     ax.pie(sizes, explode=explode, labels=labels,
            colors=colors, autopct='%1.1f%%', startangle=140)
     ax.axis('equal')
+    plt.close(fig)  # Close the figure to prevent display
     return fig
+
 
 # ---------------------------------- WORD CLOUD ----------------------------------#
 
 
+# Similarly, modify generate_wordcloud function:
 def generate_wordcloud(all_comments):
     """Generate a word cloud from comments."""
     # Preprocess the entire list for word cloud
@@ -317,6 +327,7 @@ def generate_wordcloud(all_comments):
     ax.set_title("☁️ Word Cloud of Video's Comments", fontsize=18)
     ax.axis('off')
     plt.tight_layout()
+    plt.close(fig)  # Close the figure to prevent display
     return fig
 
 # ------------------ Summarize positive and negative comment -----------------------#
