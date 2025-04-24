@@ -218,7 +218,6 @@ def preprocess_for_sentiment(comment_list):
         comment = find_emoticons(comment)
         # Remove URLs
         comment = re.sub(r'http\S+|www\S+|https\S+|t\.co\S+', '', comment)
-        # Optional: remove accents (helps standardize encoding)
         comment = unidecode(comment)
         # Clean excessive whitespace
         comment = re.sub(r'\s+', ' ', comment).strip()
@@ -246,7 +245,6 @@ def preprocess_comment_for_wordcloud(comment_list):
     return processed_comments
 
 # ---------------------------------- SENTIMENT ANALYSIS ----------------------------------#
-
 
 def analyze_sentiment(comments):
     """Analyze sentiment of comments using VADER."""
@@ -283,8 +281,6 @@ matplotlib.use('Agg')
 plt.ioff()  # Turn off interactive mode
 
 # Then modify your plot_sentiment_pie_chart function to not show the plot:
-
-
 def plot_sentiment_pie_chart(results):
     """Create a pie chart of sentiment distribution."""
     # Get the counts for each sentiment category
@@ -303,7 +299,6 @@ def plot_sentiment_pie_chart(results):
     ax.axis('equal')
     plt.close(fig)  # Close the figure to prevent display
     return fig
-
 
 # ---------------------------------- WORD CLOUD ----------------------------------#
 
@@ -324,14 +319,13 @@ def generate_wordcloud(all_comments):
     # Create the figure and plot
     fig, ax = plt.subplots(figsize=(14, 7))
     ax.imshow(wc_all, interpolation='bilinear')
-    ax.set_title("☁️ Word Cloud of Video's Comments", fontsize=18)
+    # ax.set_title("☁️ Word Cloud of Video's Comments", fontsize=18)
     ax.axis('off')
     plt.tight_layout()
     plt.close(fig)  # Close the figure to prevent display
     return fig
 
 # ------------------ Summarize positive and negative comment -----------------------#
-
 
 def chunk_documents(raw_documents):
     """Split documents into chunks for better vector search."""
@@ -372,7 +366,8 @@ def generate_positive_summary_from_vector(query="Summarize main point of these c
     {positive_comments}
     ---
     Please summarize the main points expressed in these positive comments.
-    Start your response with: "Positive Aspects:", followed by a bullet-point list of the main takeaways, with the layout of 1 line break for each point.
+    Return only a bullet-point list of the main takeaways with the layout of 1 line break for each point.
+    Start the summary with bullet points right away, and do not include any other text.
     Note that just include 2-3 main points.
     """
     docs = find_related_positive(query)
@@ -393,7 +388,8 @@ def generate_negative_summary_from_vector(query="Summarize main point of the neg
     {negative_comments}
     ---
     Please summarize the main points expressed in these negative comments
-    Start your response with: "Negative Aspects:", followed by a bullet-point list of the main takeaways, with the layout of 1 line break for each point.
+    Return only a bullet-point list of the main takeaways with the layout of 1 line break for each point.
+    Start the summary with bullet points right away, and do not include any other text.
     Note that just include 2-3 main points.
     """
     docs = find_related_negative(query)

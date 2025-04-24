@@ -305,3 +305,13 @@ header {
 .input:checked + .label + .panel {
   display: block;
 }
+.summary-section {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.bullet-line {
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+  font-family: Arial, sans-serif;
+}
