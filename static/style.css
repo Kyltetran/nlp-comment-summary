@@ -176,11 +176,33 @@ header {
   min-height: 100px;
   margin-bottom: 15px;
   resize: vertical;
+  font-family: 'Source Sans Pro', sans-serif;
 }
 
 .ask-more-container .ask-button {
   align-self: flex-end;
   margin-bottom: 20px;
+}
+
+/* QA specific styles */
+#qa-loading {
+  margin: 20px 0;
+}
+
+#answer-content {
+  margin-top: 0;
+  background-color: #f0f7ff;
+  border-left: 4px solid #007BFF;
+}
+
+#answer-content p {
+  font-size: 16px;
+  margin-top: 0;
+  margin-bottom: 15px;
+}
+
+#answer-content p:last-child {
+  margin-bottom: 0;
 }
 
 @media (max-width: 599px) {
@@ -213,10 +235,15 @@ header {
     box-shadow: none;
     padding: 10px 10px;
   }
-  
+
   /* Adjust sentiment container for mobile */
   .sentiment-container {
     flex-direction: column;
+  }
+
+  .ask-more-container .ask-button {
+    align-self: center;
+    width: 100%;
   }
 }
 
@@ -244,7 +271,7 @@ header {
     border-top-left-radius: 0;
     border-bottom-left-radius: 0;
   }
-  
+
   /* Adjust sentiment container for desktop */
   .sentiment-container {
     flex-direction: column;
