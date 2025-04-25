@@ -22,12 +22,12 @@ def get_embedding_function():
 def get_comments(video_id, api_key, max_results=None):
     """
     Fetch comments and replies from YouTube.
-
+    
     Args:
         video_id: YouTube video ID
         api_key: YouTube API key
         max_results: Maximum number of comments to fetch (None for all available)
-
+    
     Returns:
         List of comment dictionaries
     """
@@ -41,7 +41,7 @@ def get_comments(video_id, api_key, max_results=None):
     total_comments = 0
 
     print("Fetching comments from YouTube API...")
-
+    
     try:
         while True:
             # Request comments
@@ -53,30 +53,30 @@ def get_comments(video_id, api_key, max_results=None):
                 textFormat='plainText'
             )
             response = request.execute()
-
+            
             # Handle potential API errors
             if 'error' in response:
                 print(f"API Error: {response['error']['message']}")
                 break
-
+                
             # Extract top-level comments and replies
             items_count = len(response.get('items', []))
             if items_count == 0:
                 print("No comments found or all comments processed.")
                 break
-
+                
             print(f"Processing batch of {items_count} comment threads...")
-
+            
             for item in response.get('items', []):
                 # Top-level comment
                 top_level_comment = item['snippet']['topLevelComment']['snippet']
                 comment = top_level_comment['textDisplay']
                 author = top_level_comment['authorDisplayName']
                 likes = top_level_comment.get('likeCount', 0)
-
+                
                 # No 'replied_to' for top-level comment
                 comments.append({
-                    'author': author,
+                    'author': author, 
                     'comment': comment,
                     'likes': likes
                 })
@@ -88,7 +88,7 @@ def get_comments(video_id, api_key, max_results=None):
                         reply_author = reply['snippet']['authorDisplayName']
                         reply_comment = reply['snippet']['textDisplay']
                         reply_likes = reply['snippet'].get('likeCount', 0)
-
+                        
                         # Include the 'replied_to' field only for replies
                         comments.append({
                             'author': reply_author,
@@ -97,7 +97,7 @@ def get_comments(video_id, api_key, max_results=None):
                             'likes': reply_likes
                         })
                         total_comments += 1
-
+                
                 # Check if we've reached the maximum requested comments
                 if max_results and total_comments >= max_results:
                     print(f"Reached maximum requested comments: {max_results}")
@@ -105,18 +105,18 @@ def get_comments(video_id, api_key, max_results=None):
 
             # Print progress
             print(f"Fetched {total_comments} comments so far...")
-
+            
             # Check for more comments (pagination)
             next_page_token = response.get('nextPageToken')
             if not next_page_token:
                 break  # No more pages, exit the loop
-
+                
             # Add a small delay to avoid hitting API rate limits
             time.sleep(0.5)
-
+            
     except Exception as e:
         print(f"Error fetching comments: {str(e)}")
-
+        
     print(f"Completed fetching {total_comments} comments.")
     return comments
 
@@ -148,7 +148,7 @@ def save_comments_to_chroma(comments):
             "author": comment['author'],
             "likes": comment.get('likes', 0)
         }
-
+        
         if 'replied_to' in comment:
             # Add 'replied_to' for replies
             metadata['replied_to'] = comment['replied_to']
@@ -167,6 +167,34 @@ def save_comments_to_chroma(comments):
     return len(documents)
 
 
+def calculate_optimal_k(total_comments):
+    """
+    Calculate the optimal k value based on total comment count.
+    
+    Args:
+        total_comments: Total number of comments in the database
+        
+    Returns:
+        Recommended k value
+    """
+    if total_comments < 500:
+        # Small videos: k = 80-150
+        # Scale between 80-150 based on comment count
+        k = 80 + int((total_comments / 500) * 70)
+        return min(k, 150, total_comments)
+    
+    elif total_comments < 2000:
+        # Medium videos: k = 180-240
+        # Scale between 180-240 based on comment count
+        k = 180 + int(((total_comments - 500) / 1500) * 60)
+        return min(k, 240, total_comments)
+    
+    else:
+        # Large videos: k = min(240, 10% of total), capped at 350
+        k = max(240, int(total_comments * 0.1))
+        return min(k, 350, total_comments)
+
+
 def answer_question(question, k=30):
     """
     Answer a question based on the YouTube comments data.
@@ -181,10 +209,10 @@ def answer_question(question, k=30):
     # Load the Chroma vector store
     db = Chroma(persist_directory=CHROMA_PATH,
                 embedding_function=get_embedding_function())
-
+                
     # Get the total number of documents in the database
     doc_count = len(db.get()['ids'])
-
+    
     # Adjust k if it's larger than the number of available documents
     if k > doc_count:
         print(f"Adjusting k from {k} to {doc_count} (total available documents)")
@@ -192,43 +220,35 @@ def answer_question(question, k=30):
 
     # Define the optimized prompt template
     PROMPT_TEMPLATE = """
-    You are an expert YouTube comment analyzer focusing on direct question answering.
+You are an expert YouTube comment analyzer focusing on direct question answering.
 
-    QUESTION: {question}
+QUESTION: {question}
 
-    Below are relevant comments from the video:
-    {context}
+Below are relevant comments from the video:
+{context}
 
-    Answer the specific question asked in the most appropriate format. Your response format should match the type of question:
+Answer the specific question based only on these comments. Your response should be:
+1. Directly relevant to the question asked
+2. Based solely on information in the comments provided
+3. Structured appropriately for the question type
 
-    - For questions about preferences or counts (how many, what percentage, etc.):
-    • Provide a direct numerical answer if possible
-    • Explain how you arrived at this number
-    • Include relevant quotes as evidence
+For factual questions, provide direct answers with supporting evidence from comments.
+For analytical questions, organize key themes with examples from the comments.
+For comparative questions, clearly structure the different perspectives found.
 
-    - For comparison questions (pros/cons, differences, etc.):
-    • Use clear headers to separate items being compared
-    • Use bullet points for listing multiple points
-    • Structure information logically by item or category
+Begin your answer by directly addressing the question.
+Include specific examples or quotes when helpful.
+DO NOT invent information not present in the comments.
 
-    - For open-ended or analytical questions:
-    • Organize by key themes or findings
-    • Present insights in a logical progression
-    • Include specific examples from comments
-
-    Always begin your answer by directly addressing the question asked. Be specific and concise.
-
-    DO NOT invent information not present in the comments.
-    DO NOT include follow-up questions or recommendations.
-    FOCUS only on answering exactly what was asked: {question}
+QUESTION: {question}
     """
 
     print(f"Retrieving {k} most relevant comments for the question...")
     start_time = time.time()
-
+    
     # Retrieve relevant documents
     results = db.similarity_search_with_score(question, k=k)
-
+    
     retrieval_time = time.time() - start_time
     print(f"Retrieved {len(results)} comments in {retrieval_time:.2f} seconds")
 
@@ -243,13 +263,13 @@ def answer_question(question, k=30):
     # Use OllamaLLM model to generate the answer
     print("Generating answer with language model...")
     model = OllamaLLM(model="llama3.2")
-
+    
     generation_start = time.time()
     response_text = model.invoke(prompt)
     generation_time = time.time() - generation_start
-
+    
     print(f"Answer generated in {generation_time:.2f} seconds")
-
+    
     return response_text
 
 
@@ -273,6 +293,7 @@ def display_help():
     print("exit, quit, q       - End the Q&A session")
     print("help                - Show this help information")
     print("k N                 - Change the number of comments retrieved to N")
+    print("optimal            - Reset k to the optimal calculated value")
     print("clear               - Clear the screen")
     print("info                - Show current settings")
     print("========================\n")
@@ -285,8 +306,8 @@ def main():
         "youtube_url", help="YouTube URL or video ID to analyze")
     parser.add_argument("--api-key", default="AIzaSyDj7I12G6kpxEt4esWYXh2XwVAOXu7mbz0",
                         help="YouTube API key (optional)")
-    parser.add_argument("--k", type=int, default=100,
-                        help="Number of comments to retrieve for context (default: 100)")
+    parser.add_argument("--k", type=int, default=None,
+                        help="Number of comments to retrieve for context (default: auto-calculated based on comment count)")
     parser.add_argument("--max-comments", type=int, default=None,
                         help="Maximum number of comments to fetch (default: all available)")
     parser.add_argument("--reuse-db", action="store_true",
@@ -300,10 +321,10 @@ def main():
 
     # Check if Chroma database exists
     db_exists = os.path.exists(CHROMA_PATH)
-
+    
     # Determine whether to reuse or refresh the database
     refresh_db = True
-
+    
     if db_exists:
         # If --reuse-db flag is used, automatically reuse the database
         if args.reuse_db:
@@ -317,7 +338,7 @@ def main():
                 print(f"Reusing existing Chroma database")
             else:
                 print(f"Will fetch fresh comments and create new database")
-
+    
     # Get comment count and either fetch fresh comments or use existing database
     if refresh_db:
         print("Fetching comments from YouTube...")
@@ -333,15 +354,28 @@ def main():
                     embedding_function=get_embedding_function())
         total_comments = len(db.get()['ids'])
         print(f"Using existing database with {total_comments} comments")
+    
+    # Calculate optimal k value if not specified
+    if args.k is None:
+        current_k = calculate_optimal_k(total_comments)
+        print(f"Auto-calculated optimal k value: {current_k} (based on {total_comments} total comments)")
+    else:
+        current_k = args.k
+        optimal_k = calculate_optimal_k(total_comments)
+        if current_k > optimal_k * 1.5:
+            print(f"Warning: Specified k={current_k} is much higher than the recommended k={optimal_k}")
+            print(f"This may cause slower performance with minimal quality improvement.")
+        elif current_k < optimal_k * 0.5:
+            print(f"Warning: Specified k={current_k} is much lower than the recommended k={optimal_k}")
+            print(f"This may result in lower quality answers for complex questions.")
+        print(f"Using specified k value: {current_k}")
 
     # Interactive Q&A loop
     print("\n=== YouTube Comment Q&A Test ===")
     print(f"Video ID: {video_id}")
     print(f"Total comments: {total_comments}")
-    print(f"Using optimized prompt with k={args.k}")
+    print(f"Using optimized prompt with k={current_k}")
     print("Type 'help' for available commands or 'exit' to end the session.\n")
-
-    current_k = args.k
 
     while True:
         user_input = input("\nAsk a question (or type 'help'/'exit'): ").strip()
@@ -353,18 +387,22 @@ def main():
         if user_input.lower() == 'help':
             display_help()
             continue
-
+            
         if user_input.lower() == 'info':
             print(f"\nCurrent settings:")
             print(f"- k value: {current_k}")
             print(f"- Total comments: {total_comments}")
             continue
-
+            
         if user_input.lower() == 'clear':
             os.system('cls' if os.name == 'nt' else 'clear')
             continue
-
-
+            
+        if user_input.lower() == 'optimal':
+            optimal_k = calculate_optimal_k(total_comments)
+            current_k = optimal_k
+            print(f"Reset to optimal k value: {current_k}")
+            continue
 
         if user_input.lower().startswith('k '):
             try:
