@@ -1,4 +1,4 @@
-from youtube_summary_tool import analyze_youtube_comments
+from youtube_summary_tool import analyze_youtube_comments, answer_question
 from flask import Flask, request, jsonify, send_from_directory, render_template
 import os
 import subprocess
@@ -6,6 +6,7 @@ import threading
 import json
 import tempfile
 import matplotlib
+
 # Set matplotlib to use a non-interactive backend before any other matplotlib imports
 # This must be done before importing youtube_summary_tool
 matplotlib.use('Agg')
@@ -45,7 +46,7 @@ def analyze():
 
 
 @app.route('/api/ask', methods=['POST'])
-def ask_question():
+def ask_question_api():
     global latest_results
 
     if not latest_results:
@@ -58,18 +59,16 @@ def ask_question():
         return jsonify({'error': 'No question provided'}), 400
 
     try:
-        # Here you could implement a function to answer questions about the comments
-        # For now, we'll just return a placeholder response
-        answer = f"This is a placeholder answer for your question: '{question}'. In a real implementation, this would use the analysis results to provide a specific answer."
+        # Use the answer_question function to get a response
+        answer = answer_question(question)
 
         return jsonify({'answer': answer})
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error in Q&A: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+
 # Serve static files
-
-
 @app.route('/<path:path>')
 def serve_static(path):
     if os.path.exists(path):
