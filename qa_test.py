@@ -1,10 +1,3 @@
-"""
-YouTube Comment Q&A Test Script
-
-This standalone script allows you to test the Q&A functionality of the YouTube comment analyzer.
-It fetches comments for a given video and allows you to interactively ask questions about those comments.
-The script creates a fresh Chroma database each time it runs to ensure up-to-date results.
-"""
 
 import argparse
 from langchain.schema.document import Document
@@ -149,14 +142,6 @@ def save_comments_to_chroma(comments):
             content = f"{comment['author']} [👍 {comment['likes']}]:\n{comment['comment']}"
         else:
             content = f"{comment['author']}:\n{comment['comment']}"
-            
-        # Add language detection hint for non-English comments (mainly Vietnamese)
-        if any(ord(c) > 127 for c in content):
-            if any(c in content for c in ['ă', 'â', 'đ', 'ê', 'ô', 'ơ', 'ư', 'Ă', 'Â', 'Đ', 'Ê', 'Ô', 'Ơ', 'Ư']):
-                # Likely Vietnamese
-                content = f"[VIETNAMESE COMMENT] {content}"
-            else:
-                content = f"[NON-ENGLISH COMMENT] {content}"
 
         # Add metadata
         metadata = {
@@ -168,15 +153,6 @@ def save_comments_to_chroma(comments):
         if 'replied_to' in comment:
             # Add 'replied_to' for replies
             metadata['replied_to'] = comment['replied_to']
-            
-        # Add language detection to metadata
-        if any(ord(c) > 127 for c in comment['comment']):
-            if any(c in comment['comment'] for c in ['ă', 'â', 'đ', 'ê', 'ô', 'ơ', 'ư', 'Ă', 'Â', 'Đ', 'Ê', 'Ô', 'Ơ', 'Ư']):
-                metadata['language'] = 'vietnamese'
-            else:
-                metadata['language'] = 'non-english'
-        else:
-            metadata['language'] = 'english'
 
         document = Document(page_content=content, metadata=metadata)
         documents.append(document)
@@ -242,85 +218,45 @@ def answer_question(question, k=30):
     if k > doc_count:
         print(f"Adjusting k from {k} to {doc_count} (total available documents)")
         k = doc_count
-        
-    # Check for language-specific queries
-    is_language_specific = False
-    language_filter = None
-    
-    # Detect if the question is about a specific language
-    lower_question = question.lower()
-    if any(term in lower_question for term in ["vietnamese", "tiếng việt", "vietnamese comment", "vietnamese feedback"]):
-        language_filter = "vietnamese"
-        is_language_specific = True
-        print(f"Detected language-specific query for: {language_filter}")
-    elif any(term in lower_question for term in ["english", "english comment", "english feedback"]):
-        language_filter = "english"
-        is_language_specific = True
-        print(f"Detected language-specific query for: {language_filter}")
 
     # Define the optimized prompt template
     PROMPT_TEMPLATE = """
-You are a multilingual YouTube comment analyzer with expertise in analyzing comments in various languages, especially Vietnamese.
-
-QUESTION: {question}
-
-Below are relevant comments from the video:
-{context}
-
-When analyzing these comments:
-1. Pay careful attention to comments in Vietnamese and other non-English languages
-2. Accurately translate the key points and sentiments from all languages
-3. Consider both explicit statements and implied meanings
-4. Look for common themes across comments in different languages
-5. Be thorough - make sure to analyze ALL comments provided, not just the first few
-
-For comments containing criticism or negative feedback:
-- Identify specific complaints about products/services
-- Note detailed descriptions of problems, even if mentioned only once
-- Pay attention to comparisons with other products
-- Be sensitive to cultural context in the criticisms
-
-Answer the specific question based only on these comments. Your response should be:
-1. Directly relevant to the question asked
-2. Based solely on information in the comments provided
-3. Structured appropriately for the question type
-4. Comprehensive, covering all relevant points from the comments
-
-For factual questions, provide direct answers with supporting evidence from comments.
-For analytical questions, organize key themes with examples from the comments.
-For comparative questions, clearly structure the different perspectives found.
-
-Begin your answer by directly addressing the question.
-Include specific examples or quotes when helpful, with translations if they're not in English.
-DO NOT invent information not present in the comments.
-
-QUESTION: {question}
+You are an expert YouTube comment analyzer focusing on direct question answering.
+ 
+     QUESTION: {question}
+ 
+     Below are relevant comments from the video:
+     {context}
+ 
+     Answer the specific question asked in the most appropriate format. Your response format should match the type of question:
+ 
+     - For questions about preferences or counts (how many, what percentage, etc.):
+     • Provide a direct numerical answer if possible
+     • Explain how you arrived at this number
+     • Include relevant quotes as evidence
+ 
+     - For comparison questions (pros/cons, differences, etc.):
+     • Use clear headers to separate items being compared
+     • Use bullet points for listing multiple points
+     • Structure information logically by item or category
+ 
+     - For open-ended or analytical questions:
+     • Organize by key themes or findings
+     • Present insights in a logical progression
+     • Include specific examples from comments
+ 
+     Always begin your answer by directly addressing the question asked. Be specific and concise.
+ 
+     DO NOT invent information not present in the comments.
+     DO NOT include follow-up questions or recommendations.
+     FOCUS only on answering exactly what was asked: {question}
     """
 
     print(f"Retrieving {k} most relevant comments for the question...")
     start_time = time.time()
     
     # Retrieve relevant documents
-    if is_language_specific and language_filter:
-        # Filter by specific language if requested
-        filter_condition = {"language": language_filter}
-        results = db.similarity_search_with_score(question, k=k, filter=filter_condition)
-        print(f"Filtered for {language_filter} comments")
-    else:
-        # Standard retrieval for all languages
-        results = db.similarity_search_with_score(question, k=k)
-        
-        # For questions about negatives/criticisms, ensure we have some Vietnamese comments
-        if any(term in lower_question for term in ["negative", "criticism", "problem", "issue", "complaint", "disadvantage"]):
-            vietnamese_results = db.similarity_search_with_score(question, k=min(30, k//2), filter={"language": "vietnamese"})
-            # Combine with original results, avoiding duplicates
-            added_ids = set(doc.metadata["source"] for doc, _ in results)
-            for doc, score in vietnamese_results:
-                if doc.metadata["source"] not in added_ids:
-                    results.append((doc, score))
-            # Limit to k results, sorted by score
-            results = sorted(results, key=lambda x: x[1])[:k]
-            print(f"Enhanced results with Vietnamese comments for criticism-related query")
+    results = db.similarity_search_with_score(question, k=k)
     
     retrieval_time = time.time() - start_time
     print(f"Retrieved {len(results)} comments in {retrieval_time:.2f} seconds")
@@ -503,4 +439,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
