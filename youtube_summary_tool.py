@@ -52,6 +52,13 @@ NEGATIVE_VECTOR_DB = InMemoryVectorStore(EMBEDDING_MODEL)
 LANGUAGE_MODEL = OllamaLLM(model="llama3.2")
 
 
+def close_chroma_connection():
+    """Close any open connections to the Chroma database."""
+    # Force garbage collection to release file handles
+    import gc
+    gc.collect()
+    time.sleep(1)  # Give a moment for resources to be released
+
 def get_embedding_function():
     """Returns the embedding function for vector database."""
     return OllamaEmbeddings(model="mxbai-embed-large")
@@ -174,16 +181,16 @@ def get_comments(video_id, api_key):
 
 def save_comments_to_chroma(comments, video_id):
     """
-    Populate comments into Chroma database, clearing previous data if video ID changed.
+        Populate comments into Chroma database, clearing previous data if video ID changed.
 
-    Args:
-        comments: List of comment dictionaries
-        video_id: YouTube video ID to check if we need to refresh the database
+        Args:
+            comments: List of comment dictionaries
+            video_id: YouTube video ID to check if we need to refresh the database
 
-    Returns:
-        Number of comments saved to the database
-    """
-    global CURRENT_VIDEO_ID
+        Returns:
+            Number of comments saved to the database
+        """
+    global CURRENT_VIDEO_ID, CHROMA_PATH
 
     # Check if we already have a database for this video
     if CURRENT_VIDEO_ID == video_id and os.path.exists(CHROMA_PATH):
@@ -193,7 +200,19 @@ def save_comments_to_chroma(comments, video_id):
     # If video ID changed or no database exists, rebuild it
     if os.path.exists(CHROMA_PATH):
         print(f"Video ID changed from {CURRENT_VIDEO_ID} to {video_id}. Removing existing Chroma database.")
-        shutil.rmtree(CHROMA_PATH)
+
+        # Close any open connections before removing
+        close_chroma_connection()
+
+        try:
+            shutil.rmtree(CHROMA_PATH)
+        except Exception as e:
+            print(f"Error removing Chroma directory: {e}")
+            # If we can't remove the directory, create a new one with a timestamp
+            timestamp = int(time.time())
+            new_chroma_path = f"{CHROMA_PATH}_{timestamp}"
+            print(f"Creating new database at {new_chroma_path}")
+            CHROMA_PATH = new_chroma_path
 
     # Prepare the Chroma database
     print(f"Creating new Chroma vector database for video ID: {video_id}")
