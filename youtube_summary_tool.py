@@ -93,17 +93,58 @@ def get_comments(video_id, api_key):
     return comments
 
 
+# def save_comments_to_chroma(comments):
+#     """Populate comments into Chroma database, clearing previous data."""
+#     # Remove the existing Chroma directory (this will clear all data)
+#     if os.path.exists("chroma"):
+#         # This will remove the entire 'chroma' directory
+#         shutil.rmtree("chroma")
+
+#     # Prepare the Chroma database
+#     db = Chroma(persist_directory="chroma",
+#                 embedding_function=get_embedding_function())
+
+#     # Create Document objects for each comment
+#     documents = []
+#     for idx, comment in enumerate(comments, start=1):
+#         content = f"{comment['author']}:\n{comment['comment']}"
+
+#         # Add metadata
+#         metadata = {"source": f"Comment {idx}"}
+#         if 'replied_to' in comment:
+#             # Add 'replied_to' for replies
+#             metadata['replied_to'] = comment['replied_to']
+
+#         document = Document(page_content=content, metadata=metadata)
+#         documents.append(document)
+
+#     # Add new documents to Chroma
+#     db.add_documents(documents)
+#     print(f"Added {len(documents)} comments to Chroma.")
+
 def save_comments_to_chroma(comments):
     """Populate comments into Chroma database, clearing previous data."""
+    # First, try to close any existing Chroma clients
+    try:
+        if os.path.exists("chroma"):
+            # Clear the existing Chroma directory
+            db = Chroma(persist_directory="chroma",
+                        embedding_function=get_embedding_function())
+            # Delete all documents first
+            db.delete_collection()
+            # Explicitly close the client
+            del db
+    except Exception as e:
+        print(f"Warning: Could not cleanly close existing Chroma client: {e}")
+
     # Remove the existing Chroma directory (this will clear all data)
     if os.path.exists("chroma"):
         # This will remove the entire 'chroma' directory
-        shutil.rmtree("chroma")
+        shutil.rmtree("chroma", ignore_errors=True)
 
     # Prepare the Chroma database
     db = Chroma(persist_directory="chroma",
-                embedding_function=get_embedding_function())
-
+                 embedding_function=get_embedding_function())
     # Create Document objects for each comment
     documents = []
     for idx, comment in enumerate(comments, start=1):
@@ -120,7 +161,11 @@ def save_comments_to_chroma(comments):
 
     # Add new documents to Chroma
     db.add_documents(documents)
+    # Persist the data to disk
+    # db.persist()
     print(f"Added {len(documents)} comments to Chroma.")
+    # Clean up
+    del db
 
 
 def read_comments_from_chroma():
@@ -140,7 +185,7 @@ def read_comments_from_chroma():
         parts = doc.split('\n', 1)
         if len(parts) > 1:
             comments.append(parts[1])  # Just the comment text, not the author
-
+    del db
     return comments
 
 
@@ -183,6 +228,7 @@ def generate_comment_summary():
         f.write(response_text)
 
     print("Overall summary saved to overall_summary.txt")
+    del db
     return response_text
 
 
@@ -205,24 +251,12 @@ def answer_question(question, k=70):
 
     # Define an improved prompt template for Q&A
     PROMPT_TEMPLATE = """
-    You are a YouTube comment analyst with expertise in extracting insights from user discussions.
-
+    You are a YouTube comment assistant. Your task is to answer user questions based on the given video comments{context}.   
+    You should provide a concise and informative answer based on the context provided. If there is no relevant information, 
+    say "there is no relevant information related to that questions".
+    The answer should be formatted in a way that is easy to read and understand.
     USER QUESTION: {question}
-
-    RELEVANT COMMENTS FROM THE VIDEO:
-    {context}
-
-    Based on these comments, provide a thoughtful, nuanced analysis that answers the user's question.
-    Follow these guidelines:
-    1. Synthesize the information rather than just listing comments
-    2. Group similar opinions and identify patterns
-    3. Note both majority and minority viewpoints
-    4. Highlight particularly insightful or unique perspectives
-    5. Acknowledge the limitations of the available data
-    6. Structure your response in a clear, organized manner with appropriate headings
-    7. When relevant, include brief quotes from specific comments to support your points
-
-    Your goal is to provide a comprehensive, balanced answer that truly captures the sentiment and information in these comments.
+    
     """
 
     # Retrieve more relevant documents for better context
@@ -239,41 +273,19 @@ def answer_question(question, k=70):
     # Use OllamaLLM model to generate the answer
     model = OllamaLLM(model="llama3.2")
     response_text = model.invoke(prompt)
-
+    del db
     return response_text
 
 
 # ---------------------------------- PREPROCESSING ----------------------------------#
-
-
-def find_emoticons(string):
-    """Convert emoticons to text descriptions."""
-    happy_faces = [' :D', ' :)', ' (:', ' =D', ' =)',
-                   ' (=', ' ;D', ' ;)', ' :-)', ' ;-)', ' ;-D', ' :-D']
-    sad_faces = [' D:', ' :(', ' ):', ' =(', ' D=', ' )=', ' ;(',
-                 ' D;', ' )-:', ' )-;', ' D-;', ' D-:', ' :/', ' :-/', ' =/']
-    neutral_faces = [' :P', ' :*', '=P', ' =S',
-                     ' =*', ' ;*', ' :-|', ' :-*', ' =-P', ' =-S']
-    for face in happy_faces:
-        if face in string:
-            string = string.replace(face, ' happy_face ')
-    for face in sad_faces:
-        if face in string:
-            string = string.replace(face, ' sad_face ')
-    for face in neutral_faces:
-        if face in string:
-            string = string.replace(face, ' neutral_face ')
-    return string
-
-
 def preprocess_for_sentiment(comment_list):
     """Preprocess comments for sentiment analysis."""
     processed_comments = []
     for comment in comment_list:
         # Deconvert emojis
-        comment = emoji.demojize(comment)
+        # comment = emoji.demojize(comment)
         # Replace emoticons like :) or :( with label
-        comment = find_emoticons(comment)
+        # comment = find_emoticons(comment)
         # Remove URLs
         comment = re.sub(r'http\S+|www\S+|https\S+|t\.co\S+', '', comment)
         comment = unidecode(comment)
@@ -321,10 +333,10 @@ def analyze_sentiment(comments):
 
     for comment in comments:
         sentiment_scores = analyzer.polarity_scores(comment)
-        if sentiment_scores['compound'] > 0.0:
+        if sentiment_scores['compound'] >= 0.2:
             num_positive += 1
             comments_positive.append(comment)
-        elif sentiment_scores['compound'] < 0.0:
+        elif sentiment_scores['compound'] <= -0.2:
             num_negative += 1
             comments_negative.append(comment)
         else:
@@ -387,7 +399,7 @@ def generate_wordcloud(all_comments):
     return fig
 
 
-# ------------------ Summarize positive and negative comment -----------------------#
+# ------------------ Summarize positive and negative comment -----------------------
 
 def chunk_documents(raw_documents):
     """Split documents into chunks for better vector search."""
@@ -430,7 +442,7 @@ def generate_positive_summary_from_vector(query="Summarize main point of these c
     Please summarize the main points expressed in these positive comments.
     Return only a bullet-point list of the main takeaways with the layout of 1 line break for each point.
     Start the summary with bullet points right away, and do not include any other text.
-    Note that just include 2-3 main points.
+    Note that just include 2-3 main points related to positive comments.
     """
     docs = find_related_positive(query)
     context = "\n".join([doc.page_content for doc in docs])
@@ -452,7 +464,10 @@ def generate_negative_summary_from_vector(query="Summarize main point of the neg
     Please summarize the main points expressed in these negative comments
     Return only a bullet-point list of the main takeaways with the layout of 1 line break for each point.
     Start the summary with bullet points right away, and do not include any other text.
-    Note that just include 2-3 main points.
+    Note that just include 2-3 main points related to negative comments. Do summarize any positive or neutral comments if they are present.
+    If the negative comments are not enough, just say "No negative comments found."
+    
+    
     """
     docs = find_related_negative(query)
     context = "\n".join([doc.page_content for doc in docs])
@@ -467,10 +482,11 @@ def generate_negative_summary_from_vector(query="Summarize main point of the neg
 def summarize_both_sentiments(positive_comments, negative_comments, output_file="sentiment_summary.txt"):
     # Index each into their own vector store
     index_positive_documents(positive_comments)
-    index_negative_documents(negative_comments)
 
     # Summarize each
     pos_summary = generate_positive_summary_from_vector()
+    
+    index_negative_documents(negative_comments)
     neg_summary = generate_negative_summary_from_vector()
 
     # Save to file
@@ -499,6 +515,7 @@ def analyze_youtube_comments(youtube_url, api_key="AIzaSyDj7I12G6kpxEt4esWYXh2Xw
     Returns:
         Dictionary with summaries and analysis results
     """
+    
     print(f"Analyzing comments for: {youtube_url}")
 
     # Extract video ID if full URL is provided
@@ -529,12 +546,17 @@ def analyze_youtube_comments(youtube_url, api_key="AIzaSyDj7I12G6kpxEt4esWYXh2Xw
     overall_summary = generate_comment_summary()
 
     # Step 5: Preprocess comments for sentiment analysis
-    print("Analyzing sentiment...")
-    processed_comments = preprocess_for_sentiment(raw_comments)
+    
+    processed_comments = preprocess_comment_for_wordcloud(raw_comments)
 
     # Step 6: Perform sentiment analysis
-    sentiment_results, positive_comments, negative_comments, neutral_comments = analyze_sentiment(
-        processed_comments)
+    print("Analyzing sentiment...")
+    senti_comment = preprocess_for_sentiment(raw_comments)
+    sentiment_results, positive_comments, negative_comments, neutral_comments = analyze_sentiment(senti_comment)
+    print("Positive comments:", (positive_comments))
+    print("=================================================================")
+    print("Negative comments:", (negative_comments))
+    
 
     # Step 7: Create sentiment visualization
     print("Creating visualizations...")
