@@ -44,17 +44,13 @@ def get_embedding_function():
 
 
 def get_comments(video_id, api_key):
-    """Fetch comments and replies from YouTube."""
-    # Create a YouTube API client
-    youtube = googleapiclient.discovery.build(
-        'youtube', 'v3', developerKey=api_key)
+    """Fetch comments and replies from YouTube with 'replied_to' info for replies."""
 
-    # Call the API to get the comments
+    youtube = googleapiclient.discovery.build('youtube', 'v3', developerKey=api_key)
     comments = []
     next_page_token = None
 
     while True:
-        # Request comments
         request = youtube.commentThreads().list(
             part='snippet,replies',
             videoId=video_id,
@@ -64,63 +60,34 @@ def get_comments(video_id, api_key):
         )
         response = request.execute()
 
-        # Extract top-level comments and replies
-        for item in response.get('items'):
-            # Top-level comment
-            top_level_comment = item['snippet']['topLevelComment']['snippet']
-            comment = top_level_comment['textDisplay']
-            author = top_level_comment['authorDisplayName']
-            # No 'replied_to' for top-level comment
-            comments.append({'author': author, 'comment': comment})
+        for item in response.get('items', []):
+            top_snippet = item['snippet']['topLevelComment']['snippet']
+            top_author = top_snippet['authorDisplayName']
+            top_comment = top_snippet['textDisplay']
 
-            # Replies (if any)
+            # Add top-level comment
+            comments.append({
+                'author': top_author,
+                'comment': top_comment,
+                'is_reply': False
+            })
+
+            # Add replies (if present), with replied_to field
             if 'replies' in item:
                 for reply in item['replies']['comments']:
-                    reply_author = reply['snippet']['authorDisplayName']
-                    reply_comment = reply['snippet']['textDisplay']
-                    # Include the 'replied_to' field only for replies
+                    reply_snippet = reply['snippet']
                     comments.append({
-                        'author': reply_author,
-                        'comment': reply_comment,
-                        'replied_to': author  # The reply is to the top-level comment's author
+                        'author': reply_snippet['authorDisplayName'],
+                        'comment': reply_snippet['textDisplay'],
+                        'replied_to': top_author,
+                        'is_reply': True
                     })
 
-        # Check for more comments (pagination)
         next_page_token = response.get('nextPageToken')
         if not next_page_token:
-            break  # No more pages, exit the loop
+            break
 
     return comments
-
-
-# def save_comments_to_chroma(comments):
-#     """Populate comments into Chroma database, clearing previous data."""
-#     # Remove the existing Chroma directory (this will clear all data)
-#     if os.path.exists("chroma"):
-#         # This will remove the entire 'chroma' directory
-#         shutil.rmtree("chroma")
-
-#     # Prepare the Chroma database
-#     db = Chroma(persist_directory="chroma",
-#                 embedding_function=get_embedding_function())
-
-#     # Create Document objects for each comment
-#     documents = []
-#     for idx, comment in enumerate(comments, start=1):
-#         content = f"{comment['author']}:\n{comment['comment']}"
-
-#         # Add metadata
-#         metadata = {"source": f"Comment {idx}"}
-#         if 'replied_to' in comment:
-#             # Add 'replied_to' for replies
-#             metadata['replied_to'] = comment['replied_to']
-
-#         document = Document(page_content=content, metadata=metadata)
-#         documents.append(document)
-
-#     # Add new documents to Chroma
-#     db.add_documents(documents)
-#     print(f"Added {len(documents)} comments to Chroma.")
 
 def save_comments_to_chroma(comments):
     """Populate comments into Chroma database, clearing previous data."""
@@ -208,12 +175,10 @@ def generate_comment_summary():
     """
 
     # Retrieve relevant documents
-    results = db.similarity_search_with_score(
-        "summarize youtube comments", k=2000)
+    results = db.similarity_search_with_score("summarize youtube comments", k=2000)
 
     # Build context string from retrieved documents
-    context_text = "\n\n---\n\n".join(
-        [doc.page_content for doc, _score in results])
+    context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
 
     # Format prompt with context
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
@@ -251,12 +216,18 @@ def answer_question(question, k=70):
 
     # Define an improved prompt template for Q&A
     PROMPT_TEMPLATE = """
-    You are a YouTube comment assistant. Your task is to answer user questions based on the given video comments{context}.   
-    You should provide a concise and informative answer based on the context provided. If there is no relevant information, 
-    say "there is no relevant information related to that questions".
-    The answer should be formatted in a way that is easy to read and understand.
-    USER QUESTION: {question}
-    
+You are a YouTube comment analyzer tasked with answering questions about video comments.
+
+Using the following YouTube comments:
+{context}
+---
+Please answer the following question about the comments thoroughly and accurately: {question}
+
+Your answer should rely solely on the provided comments. Be detailed and precise, avoiding assumptions beyond the content of the comments.
+
+Respond in a friendly, informative, and helpful tone.
+
+DO NOT include irrelevant information or invent details not in the comments.
     """
 
     # Retrieve more relevant documents for better context
@@ -315,7 +286,7 @@ def preprocess_comment_for_wordcloud(comment_list):
     return processed_comments
 
 
-# ---------------------------------- SENTIMENT ANALYSIS ----------------------------------#
+# ---------------------------------- SENTIMENT ANALYSIS ----------------------------------
 
 def analyze_sentiment(comments):
     """Analyze sentiment of comments using VADER."""
@@ -349,7 +320,7 @@ def analyze_sentiment(comments):
 
 
 matplotlib.use('Agg')
-plt.ioff()  # Turn off interactive mode
+plt.ioff() 
 
 
 # Then modify your plot_sentiment_pie_chart function to not show the plot:
@@ -533,6 +504,7 @@ def analyze_youtube_comments(youtube_url, api_key="AIzaSyDj7I12G6kpxEt4esWYXh2Xw
     # Step 1: Get comments from YouTube API
     print("Fetching comments from YouTube...")
     comments = get_comments(video_id, api_key)
+    print(comments)
 
     # Step 2: Save comments to Chroma vector database
     print("Saving comments to vector database...")
