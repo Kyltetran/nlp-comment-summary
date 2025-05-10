@@ -1,4 +1,5 @@
-from youtube_summary_tool import analyze_youtube_comments, answer_question, extract_video_id, CURRENT_VIDEO_ID
+from youtube_summary_tool import analyze_youtube_comments, answer_question, extract_video_id, CURRENT_VIDEO_ID, \
+    close_chroma_connection
 from flask import Flask, request, jsonify, send_from_directory, render_template
 import os
 import json
@@ -8,7 +9,7 @@ import matplotlib
 # Set matplotlib to use a non-interactive backend before any other matplotlib imports
 matplotlib.use('Agg')
 
-app = Flask(__name__, static_folder='.')
+app = Flask(__name__, static_folder='static')
 
 # Store the latest analysis results
 latest_results = None
@@ -35,6 +36,9 @@ def analyze():
 
         if not video_id:
             return jsonify({'error': 'Invalid YouTube URL or video ID'}), 400
+
+        # Make sure any previous connections are closed before analysis
+        close_chroma_connection()
 
         # Run the analysis (the function will reuse the database if it's the same video)
         results = analyze_youtube_comments(youtube_url)
@@ -118,8 +122,14 @@ def get_status():
 
 
 # Serve static files
-@app.route('/<path:path>')
+@app.route('/static/<path:path>')
 def serve_static(path):
+    return send_from_directory('static', path)
+
+
+# Serve files from root directory
+@app.route('/<path:path>')
+def serve_root_files(path):
     if os.path.exists(path):
         return send_from_directory('.', path)
     else:
