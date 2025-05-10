@@ -216,11 +216,9 @@ def answer_question(question, k=70):
     Follow these guidelines:
     1. Synthesize the information rather than just listing comments
     2. Group similar opinions and identify patterns
-    3. Note both majority and minority viewpoints
     4. Highlight particularly insightful or unique perspectives
-    5. Acknowledge the limitations of the available data
-    6. Structure your response in a clear, organized manner with appropriate headings
-    7. When relevant, include brief quotes from specific comments to support your points
+    5. Structure your response in a clear, organized manner with appropriate headings
+    6. When relevant, include brief quotes from specific comments to support your points
 
     Your goal is to provide a comprehensive, balanced answer that truly captures the sentiment and information in these comments.
     """
@@ -582,7 +580,8 @@ if __name__ == "__main__":
         "youtube_url", help="YouTube URL or video ID to analyze")
     parser.add_argument("--api-key", default="AIzaSyDj7I12G6kpxEt4esWYXh2XwVAOXu7mbz0",
                         help="YouTube API key (optional)")
-    parser.add_argument("--question", help="Ask a specific question about the comments")
+    parser.add_argument(
+        "--question", help="Ask a specific question about the comments")
 
     args = parser.parse_args()
 
