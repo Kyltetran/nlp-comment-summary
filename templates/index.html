@@ -58,12 +58,24 @@
        <div class="panel">
           <h2>Ask Questions About Comments</h2>
           <div class="ask-more-container">
+             <p class="tip">Ask specific questions about the video comments. For example:</p>
+             <ul class="examples-list">
+                <li>What do viewers like most about this video?</li>
+                <li>What criticisms do people have?</li>
+                <li>What questions do people ask in the comments?</li>
+                <li>What common themes appear in the comments?</li>
+             </ul>
              <textarea id="question" placeholder="Ask a specific question about the comments..."></textarea>
+             <div class="advanced-options">
+                <label class="k-slider-label" title="Higher values include more comments but may be slower">Comment sample size: <span id="k-value">Auto</span></label>
+                <input type="range" id="k-slider" min="0" max="400" value="0" title="0 = Automatic, higher values include more comments but may be slower">
+             </div>
              <button id="ask-button" class="ask-button">Ask</button>
              <div id="qa-loading" class="loading-container" style="display: none;">
                 <div class="loading-spinner"></div>
                 <p>Finding answer in comments...</p>
              </div>
+             <div id="answer-stats" class="stats-area" style="display: none;"></div>
              <div id="answer-content" class="content-area" style="display: none;"></div>
           </div>
        </div>
@@ -76,7 +88,16 @@
           const askButton = document.getElementById('ask-button');
           const qaLoadingIndicator = document.getElementById('qa-loading');
           const answerContent = document.getElementById('answer-content');
+          const answerStats = document.getElementById('answer-stats');
+          const kSlider = document.getElementById('k-slider');
+          const kValue = document.getElementById('k-value');
           let currentVideoId = null;
+
+          // Handle k-slider changes
+          kSlider.addEventListener('input', function() {
+             const val = parseInt(this.value);
+             kValue.textContent = val === 0 ? "Auto" : val;
+          });
 
           form.addEventListener('submit', function(e) {
              e.preventDefault();
@@ -85,6 +106,7 @@
              loadingIndicator.style.display = 'flex';
              resultsContainer.style.display = 'none';
              answerContent.style.display = 'none';
+             answerStats.style.display = 'none';
 
              // Get the YouTube URL
              const youtubeUrl = document.getElementById('youtube-url').value;
@@ -99,18 +121,20 @@
                 // Show loading indicator
                 qaLoadingIndicator.style.display = 'flex';
                 answerContent.style.display = 'none';
+                answerStats.style.display = 'none';
+
+                // Get k value from slider (0 means auto)
+                const kVal = parseInt(kSlider.value);
+                const k = kVal === 0 ? null : kVal;
 
                 // Call the backend to answer the question
-                askQuestion(question);
+                askQuestion(question, k);
              }
           });
 
           // Function to call the backend API
           function analyzeYouTubeComments(youtubeUrl) {
-             // Simulating backend call to python script
-             console.log("Calling: python youtube_summary_tool.py " + youtubeUrl);
-
-             // Real implementation using fetch
+             // Call the backend API
              fetch('/api/analyze', {
                 method: 'POST',
                 headers: {
@@ -118,7 +142,12 @@
                 },
                 body: JSON.stringify({ youtube_url: youtubeUrl }),
              })
-             .then(response => response.json())
+             .then(response => {
+                if (!response.ok) {
+                   throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                return response.json();
+             })
              .then(data => {
                 // Store video ID for later use
                 currentVideoId = data.video_id;
@@ -128,7 +157,7 @@
              })
              .catch(error => {
                 console.error('Error:', error);
-                alert('An error occurred while analyzing the comments.');
+                alert('An error occurred while analyzing the comments: ' + error.message);
                 loadingIndicator.style.display = 'none';
              });
           }
@@ -162,9 +191,11 @@
              document.getElementById('question').value = '';
              answerContent.innerHTML = '';
              answerContent.style.display = 'none';
+             answerStats.style.display = 'none';
           }
 
           function formatBullets(text) {
+             if (!text) return '';
              return text
                 .split('\n')
                 .filter(line => line.trim() !== '')
@@ -173,6 +204,7 @@
           }
 
           function formatParagraphs(text) {
+             if (!text) return '';
              return text
                 .split(/\n\s*\n/) // split by empty lines or double newlines
                 .filter(p => p.trim() !== '')
@@ -181,18 +213,35 @@
           }
 
           // Function to ask additional questions
-          function askQuestion(question) {
+          function askQuestion(question, k = null) {
+             // Prepare request payload
+             const payload = { question: question };
+             if (k !== null) {
+                payload.k = k;
+             }
+
              fetch('/api/ask', {
                 method: 'POST',
                 headers: {
                    'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ question: question }),
+                body: JSON.stringify(payload),
              })
-             .then(response => response.json())
+             .then(response => {
+                if (!response.ok) {
+                   throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                return response.json();
+             })
              .then(data => {
                 // Hide loading indicator
                 qaLoadingIndicator.style.display = 'none';
+
+                // Display processing stats if available
+                if (data.processing_time) {
+                   answerStats.innerHTML = `<span class="processing-time">Processing time: ${data.processing_time}</span>`;
+                   answerStats.style.display = 'block';
+                }
 
                 // Display the answer
                 answerContent.innerHTML = formatParagraphs(data.answer);
@@ -201,9 +250,29 @@
              .catch(error => {
                 console.error('Error:', error);
                 qaLoadingIndicator.style.display = 'none';
-                alert('An error occurred while processing your question.');
+
+                // Show error message in the answer content area
+                answerContent.innerHTML = `<p class="error-message">Error: ${error.message}. Please try again or reload the page.</p>`;
+                answerContent.style.display = 'block';
              });
           }
+
+          // Check database status on page load
+          fetch('/api/status')
+            .then(response => response.json())
+            .then(data => {
+               if (data.database_exists && data.current_video_id) {
+                  console.log(`Database exists for video ID: ${data.current_video_id}`);
+
+                  if (data.metadata && data.metadata.comment_count) {
+                     // Set max value for k-slider based on comment count
+                     const maxK = Math.min(Math.max(data.metadata.comment_count, 100), 400);
+                     kSlider.max = maxK;
+                     console.log(`Set max k value to ${maxK} based on ${data.metadata.comment_count} comments`);
+                  }
+               }
+            })
+            .catch(err => console.error('Error checking database status:', err));
        });
     </script>
 </body>
