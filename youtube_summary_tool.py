@@ -205,22 +205,16 @@ def answer_question(question, k=70):
 
     # Define an improved prompt template for Q&A
     PROMPT_TEMPLATE = """
-    You are a YouTube comment analyst with expertise in extracting insights from user discussions.
+    You are a YouTube comment analyzer tasked with answering questions about video comments.
 
-    USER QUESTION: {question}
-
-    RELEVANT COMMENTS FROM THE VIDEO:
+    Using the following YouTube comments:
     {context}
+    ---
+    Please answer the following question about the comments thoroughly and accurately: {question}
 
-    Based on these comments, provide a thoughtful, nuanced analysis that answers the user's question.
-    Follow these guidelines:
-    1. Synthesize the information rather than just listing comments
-    2. Group similar opinions and identify patterns
-    4. Highlight particularly insightful or unique perspectives
-    5. Structure your response in a clear, organized manner with appropriate headings
-    6. When relevant, include brief quotes from specific comments to support your points
+    Your answer should rely solely on the provided comments. Be detailed and precise, avoiding assumptions beyond the content of the comments.
 
-    Your goal is to provide a comprehensive, balanced answer that truly captures the sentiment and information in these comments.
+    Respond in a friendly, informative, and helpful tone.
     """
 
     # Retrieve more relevant documents for better context
@@ -229,6 +223,8 @@ def answer_question(question, k=70):
     # Build context string from retrieved documents with author attribution
     context_text = "\n\n---\n\n".join(
         [f"Comment: {doc.page_content}" for doc, _score in results])
+
+    print(context_text)
 
     # Format prompt with context
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
