@@ -1,11 +1,22 @@
-import matplotlib
-import googleapiclient.discovery
+# First, regular imports
 import argparse
 import os
 import shutil
 import re
 import sys
+import time
+import json
+
+# Set matplotlib backend before importing anything matplotlib-related
+import matplotlib
+
+matplotlib.use('Agg')  # Non-interactive backend
+
+# Now it's safe to import pyplot
 import matplotlib.pyplot as plt
+from googleapiclient import discovery
+
+# Continue with the rest of your imports
 import emoji
 import nltk
 from unidecode import unidecode
@@ -31,6 +42,9 @@ nltk.download('wordnet', quiet=True)
 # Global constants
 CHROMA_PATH = "chroma"
 
+# Global variable to track the current video being analyzed
+CURRENT_VIDEO_ID = None
+
 # Models and Vector DBs for sentiment analysis
 EMBEDDING_MODEL = OllamaEmbeddings(model="mxbai-embed-large")
 POSITIVE_VECTOR_DB = InMemoryVectorStore(EMBEDDING_MODEL)
@@ -43,90 +57,199 @@ def get_embedding_function():
     return OllamaEmbeddings(model="mxbai-embed-large")
 
 
+def extract_video_id(youtube_url):
+    """Extract video ID from a YouTube URL."""
+    patterns = [
+        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
+        r'(?:embed\/)([0-9A-Za-z_-]{11})',
+        r'(?:watch\?v=)([0-9A-Za-z_-]{11})'
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, youtube_url)
+        if match:
+            return match.group(1)
+
+    # If no patterns match, assume it's already a video ID if it's 11 chars
+    if len(youtube_url) == 11:
+        return youtube_url
+
+    return None
+
+
 def get_comments(video_id, api_key):
-    """Fetch comments and replies from YouTube."""
+    """
+    Fetch comments and replies from YouTube with improved data structure.
+
+    Args:
+        video_id: YouTube video ID
+        api_key: YouTube API key
+
+    Returns:
+        List of comment dictionaries with author, text, likes, etc.
+    """
     # Create a YouTube API client
-    youtube = googleapiclient.discovery.build(
-        'youtube', 'v3', developerKey=api_key)
+    youtube = discovery.build('youtube', 'v3', developerKey=api_key)
 
     # Call the API to get the comments
     comments = []
     next_page_token = None
+    total_comments = 0
 
-    while True:
-        # Request comments
-        request = youtube.commentThreads().list(
-            part='snippet,replies',
-            videoId=video_id,
-            pageToken=next_page_token,
-            maxResults=100,
-            textFormat='plainText'
-        )
-        response = request.execute()
+    print("Fetching comments from YouTube API...")
 
-        # Extract top-level comments and replies
-        for item in response.get('items'):
-            # Top-level comment
-            top_level_comment = item['snippet']['topLevelComment']['snippet']
-            comment = top_level_comment['textDisplay']
-            author = top_level_comment['authorDisplayName']
-            # No 'replied_to' for top-level comment
-            comments.append({'author': author, 'comment': comment})
+    try:
+        while True:
+            # Request comments
+            request = youtube.commentThreads().list(
+                part='snippet,replies',
+                videoId=video_id,
+                pageToken=next_page_token,
+                maxResults=100,  # Maximum allowed by API
+                textFormat='plainText'
+            )
+            response = request.execute()
 
-            # Replies (if any)
-            if 'replies' in item:
-                for reply in item['replies']['comments']:
-                    reply_author = reply['snippet']['authorDisplayName']
-                    reply_comment = reply['snippet']['textDisplay']
-                    # Include the 'replied_to' field only for replies
-                    comments.append({
-                        'author': reply_author,
-                        'comment': reply_comment,
-                        'replied_to': author  # The reply is to the top-level comment's author
-                    })
+            # Handle potential API errors
+            if 'error' in response:
+                print(f"API Error: {response['error']['message']}")
+                break
 
-        # Check for more comments (pagination)
-        next_page_token = response.get('nextPageToken')
-        if not next_page_token:
-            break  # No more pages, exit the loop
+            # Extract top-level comments and replies
+            items_count = len(response.get('items', []))
+            if items_count == 0:
+                print("No comments found or all comments processed.")
+                break
 
+            print(f"Processing batch of {items_count} comment threads...")
+
+            for item in response.get('items', []):
+                # Top-level comment
+                top_level_comment = item['snippet']['topLevelComment']['snippet']
+                comment = top_level_comment['textDisplay']
+                author = top_level_comment['authorDisplayName']
+                likes = top_level_comment.get('likeCount', 0)
+
+                # No 'replied_to' for top-level comment
+                comments.append({
+                    'author': author,
+                    'comment': comment,
+                    'likes': likes
+                })
+                total_comments += 1
+
+                # Replies (if any)
+                if 'replies' in item:
+                    for reply in item['replies']['comments']:
+                        reply_author = reply['snippet']['authorDisplayName']
+                        reply_comment = reply['snippet']['textDisplay']
+                        reply_likes = reply['snippet'].get('likeCount', 0)
+
+                        # Include the 'replied_to' field only for replies
+                        comments.append({
+                            'author': reply_author,
+                            'comment': reply_comment,
+                            'replied_to': author,
+                            'likes': reply_likes
+                        })
+                        total_comments += 1
+
+            # Print progress
+            print(f"Fetched {total_comments} comments so far...")
+
+            # Check for more comments (pagination)
+            next_page_token = response.get('nextPageToken')
+            if not next_page_token:
+                break  # No more pages, exit the loop
+
+            # Add a small delay to avoid hitting API rate limits
+            time.sleep(0.5)
+
+    except Exception as e:
+        print(f"Error fetching comments: {str(e)}")
+
+    print(f"Completed fetching {total_comments} comments.")
     return comments
 
 
-def save_comments_to_chroma(comments):
-    """Populate comments into Chroma database, clearing previous data."""
-    # Remove the existing Chroma directory (this will clear all data)
-    if os.path.exists("chroma"):
-        # This will remove the entire 'chroma' directory
-        shutil.rmtree("chroma")
+def save_comments_to_chroma(comments, video_id):
+    """
+    Populate comments into Chroma database, clearing previous data if video ID changed.
+
+    Args:
+        comments: List of comment dictionaries
+        video_id: YouTube video ID to check if we need to refresh the database
+
+    Returns:
+        Number of comments saved to the database
+    """
+    global CURRENT_VIDEO_ID
+
+    # Check if we already have a database for this video
+    if CURRENT_VIDEO_ID == video_id and os.path.exists(CHROMA_PATH):
+        print(f"Using existing Chroma database for video ID: {video_id}")
+        return len(comments)
+
+    # If video ID changed or no database exists, rebuild it
+    if os.path.exists(CHROMA_PATH):
+        print(f"Video ID changed from {CURRENT_VIDEO_ID} to {video_id}. Removing existing Chroma database.")
+        shutil.rmtree(CHROMA_PATH)
 
     # Prepare the Chroma database
-    db = Chroma(persist_directory="chroma",
+    print(f"Creating new Chroma vector database for video ID: {video_id}")
+    db = Chroma(persist_directory=CHROMA_PATH,
                 embedding_function=get_embedding_function())
 
     # Create Document objects for each comment
     documents = []
     for idx, comment in enumerate(comments, start=1):
-        content = f"{comment['author']}:\n{comment['comment']}"
+        # Format the comment text to include author and likes
+        if comment.get('likes', 0) > 0:
+            content = f"{comment['author']} [👍 {comment['likes']}]:\n{comment['comment']}"
+        else:
+            content = f"{comment['author']}:\n{comment['comment']}"
 
         # Add metadata
-        metadata = {"source": f"Comment {idx}"}
+        metadata = {
+            "source": f"Comment {idx}",
+            "author": comment['author'],
+            "likes": comment.get('likes', 0)
+        }
+
         if 'replied_to' in comment:
             # Add 'replied_to' for replies
             metadata['replied_to'] = comment['replied_to']
+            # Mark as reply in the content for better context
+            content = f"[REPLY to {comment['replied_to']}] {content}"
 
         document = Document(page_content=content, metadata=metadata)
         documents.append(document)
 
-    # Add new documents to Chroma
-    db.add_documents(documents)
-    print(f"Added {len(documents)} comments to Chroma.")
+    # Add documents to Chroma in batches to avoid memory issues
+    batch_size = 100
+    for i in range(0, len(documents), batch_size):
+        batch = documents[i:i + batch_size]
+        db.add_documents(batch)
+        print(f"Added batch of {len(batch)} comments to Chroma (total {i + len(batch)})")
+
+    # Update the current video ID
+    CURRENT_VIDEO_ID = video_id
+
+    # Save video metadata to help with QA
+    with open(os.path.join(CHROMA_PATH, "video_metadata.json"), "w", encoding="utf-8") as f:
+        json.dump({
+            "video_id": video_id,
+            "comment_count": len(documents)
+        }, f, ensure_ascii=False, indent=2)
+
+    print(f"Successfully added all {len(documents)} comments to Chroma database.")
+    return len(documents)
 
 
 def read_comments_from_chroma():
     """Read comments from the Chroma database."""
     # Connect to the existing Chroma database
-    db = Chroma(persist_directory="chroma",
+    db = Chroma(persist_directory=CHROMA_PATH,
                 embedding_function=get_embedding_function())
 
     # Get all documents from the database
@@ -135,13 +258,143 @@ def read_comments_from_chroma():
     # Extract comments from the documents
     comments = []
     for doc in results['documents']:
-        # Each document has format "Author:\nComment"
+        # Each document has format "Author [👍 Likes]:\nComment" or "Author:\nComment"
         # Split to get just the comment part
         parts = doc.split('\n', 1)
         if len(parts) > 1:
             comments.append(parts[1])  # Just the comment text, not the author
 
     return comments
+
+
+def calculate_optimal_k(total_comments):
+    """
+    Calculate the optimal k value based on total comment count.
+
+    Args:
+        total_comments: Total number of comments in the database
+
+    Returns:
+        Recommended k value
+    """
+    if total_comments < 500:
+        # Small videos: k = 80-150
+        # Scale between 80-150 based on comment count
+        k = 80 + int((total_comments / 500) * 70)
+        return min(k, 150, total_comments)
+
+    elif total_comments < 2000:
+        # Medium videos: k = 180-250
+        # Scale between 180-250 based on comment count
+        k = 180 + int(((total_comments - 500) / 1500) * 70)
+        return min(k, 250, total_comments)
+
+    else:
+        # Large videos: k = min(250, 12% of total), capped at 400
+        k = max(250, int(total_comments * 0.12))
+        return min(k, 400, total_comments)
+
+
+def answer_question(question, k=None):
+    """
+    Answer a question based on the YouTube comments data with improved analysis.
+
+    Args:
+        question: The user's question about the video comments
+        k: Number of relevant comments to retrieve for context (auto-calculated if None)
+
+    Returns:
+        Answer generated by the LLM
+    """
+    # Start timing
+    start_time = time.time()
+
+    # Load the Chroma vector store
+    db = Chroma(persist_directory=CHROMA_PATH,
+                embedding_function=get_embedding_function())
+
+    # Get the total number of documents in the database
+    doc_count = len(db.get()['ids'])
+
+    # Calculate optimal k if not specified
+    if k is None:
+        k = calculate_optimal_k(doc_count)
+        print(f"Auto-calculated optimal k value: {k} (based on {doc_count} total comments)")
+
+    # Adjust k if it's larger than the number of available documents
+    if k > doc_count:
+        print(f"Adjusting k from {k} to {doc_count} (total available documents)")
+        k = doc_count
+
+    # Improved prompt template with better structure and instructions
+    PROMPT_TEMPLATE = """
+    You are a YouTube comment analyst answering questions about video comments.
+
+    QUESTION: {question}
+
+    Below are relevant comments from the video:
+    {context}
+
+    Answer the question ONLY using information in these comments. Your response should:
+
+    1. Start with a direct answer addressing the question
+    2. Group similar opinions together
+    3. Include specific quotes from commenters as evidence when relevant
+    4. Stay STRICTLY focused on the question
+
+    For comparison or preference questions:
+    - Use clear headings
+    - Use bullet points for listing multiple points
+    - Structure information logically by categories
+
+    For numerical questions (counts, percentages, etc.):
+    - Provide a direct numerical answer if possible
+    - Explain how you arrived at this number
+    - Include specific evidence from comments
+
+    DO NOT invent information not present in the comments.
+    DO NOT include follow-up questions or recommendations unless requested.
+    FOCUS only on answering exactly what was asked: {question}
+    """
+
+    print(f"Retrieving {k} most relevant comments for the question...")
+
+    # Retrieve relevant documents
+    results = db.similarity_search_with_score(question, k=k)
+
+    retrieval_time = time.time() - start_time
+    print(f"Retrieved {len(results)} comments in {retrieval_time:.2f} seconds")
+
+    # Sort comments by relevance score to prioritize most relevant ones
+    sorted_results = sorted(results, key=lambda x: x[1])
+
+    # Take only the most relevant comments to avoid overwhelming the LLM
+    top_results = sorted_results[:min(k, len(sorted_results))]
+
+    # Build context string from retrieved documents with comment numbering
+    context_parts = []
+    for i, (doc, score) in enumerate(top_results):
+        context_parts.append(f"[{i + 1}] {doc.page_content}")
+
+    context_text = "\n\n".join(context_parts)
+
+    # Format prompt with context
+    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+    prompt = prompt_template.format(question=question, context=context_text)
+
+    # Use OllamaLLM model to generate the answer
+    print("Generating answer with language model...")
+    model = OllamaLLM(model="llama3.2")
+
+    generation_start = time.time()
+    response_text = model.invoke(prompt)
+    generation_time = time.time() - generation_start
+
+    total_time = time.time() - start_time
+    print(f"Answer generated in {generation_time:.2f} seconds")
+    print(f"Total processing time: {total_time:.2f} seconds")
+
+    return response_text
 
 
 def generate_comment_summary():
@@ -183,57 +436,6 @@ def generate_comment_summary():
         f.write(response_text)
 
     print("Overall summary saved to overall_summary.txt")
-    return response_text
-
-
-# ---------------------------------- Q&A FUNCTIONALITY ----------------------------------#
-
-def answer_question(question, k=70):
-    """
-    Answer a question based on the YouTube comments data with improved analysis.
-
-    Args:
-        question: The user's question about the video comments
-        k: Number of relevant comments to retrieve for context
-
-    Returns:
-        Answer generated by the LLM
-    """
-    # Load the Chroma vector store
-    db = Chroma(persist_directory=CHROMA_PATH,
-                embedding_function=get_embedding_function())
-
-    # Define an improved prompt template for Q&A
-    PROMPT_TEMPLATE = """
-    You are a YouTube comment analyzer tasked with answering questions about video comments.
-
-    Using the following YouTube comments:
-    {context}
-    ---
-    Please answer the following question about the comments thoroughly and accurately: {question}
-
-    Your answer should rely solely on the provided comments. Be detailed and precise, avoiding assumptions beyond the content of the comments.
-
-    Respond in a friendly, informative, and helpful tone.
-    """
-
-    # Retrieve more relevant documents for better context
-    results = db.similarity_search_with_score(question, k=k)
-
-    # Build context string from retrieved documents with author attribution
-    context_text = "\n\n---\n\n".join(
-        [f"Comment: {doc.page_content}" for doc, _score in results])
-
-    print(context_text)
-
-    # Format prompt with context
-    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(question=question, context=context_text)
-
-    # Use OllamaLLM model to generate the answer
-    model = OllamaLLM(model="llama3.2")
-    response_text = model.invoke(prompt)
-
     return response_text
 
 
@@ -481,7 +683,6 @@ def summarize_both_sentiments(positive_comments, negative_comments, output_file=
 
 # ---------------------------------- MAIN FUNCTION ----------------------------------#
 
-
 def analyze_youtube_comments(youtube_url, api_key="AIzaSyDj7I12G6kpxEt4esWYXh2XwVAOXu7mbz0"):
     """
     Main function to analyze YouTube comments from a URL.
@@ -496,24 +697,16 @@ def analyze_youtube_comments(youtube_url, api_key="AIzaSyDj7I12G6kpxEt4esWYXh2Xw
     print(f"Analyzing comments for: {youtube_url}")
 
     # Extract video ID if full URL is provided
-    if "v=" in youtube_url:
-        video_id = youtube_url.split("v=")[-1]
-        # Remove any additional URL parameters
-        if "&" in video_id:
-            video_id = video_id.split("&")[0]
-    else:
-        # Assume it's already a video ID
-        video_id = youtube_url
-
+    video_id = extract_video_id(youtube_url)
     print(f"Extracted video ID: {video_id}")
 
     # Step 1: Get comments from YouTube API
     print("Fetching comments from YouTube...")
     comments = get_comments(video_id, api_key)
 
-    # Step 2: Save comments to Chroma vector database
+    # Step 2: Save comments to Chroma vector database (reuse if same video)
     print("Saving comments to vector database...")
-    save_comments_to_chroma(comments)
+    comment_count = save_comments_to_chroma(comments, video_id)
 
     # Step 3: Read comments from Chroma
     raw_comments = read_comments_from_chroma()
@@ -547,7 +740,7 @@ def analyze_youtube_comments(youtube_url, api_key="AIzaSyDj7I12G6kpxEt4esWYXh2Xw
     # Return results
     results = {
         "video_id": video_id,
-        "comment_count": len(comments),
+        "comment_count": comment_count,
         "overall_summary": overall_summary,
         "sentiment_counts": {
             "positive": sentiment_results[1],
@@ -576,34 +769,51 @@ if __name__ == "__main__":
         "youtube_url", help="YouTube URL or video ID to analyze")
     parser.add_argument("--api-key", default="AIzaSyDj7I12G6kpxEt4esWYXh2XwVAOXu7mbz0",
                         help="YouTube API key (optional)")
-    parser.add_argument(
-        "--question", help="Ask a specific question about the comments")
+    parser.add_argument("--question", help="Ask a specific question about the comments")
+    parser.add_argument("--k", type=int, default=None,
+                        help="Number of comments to retrieve for context (default: auto-calculated)")
+    parser.add_argument("--reuse-db", action="store_true",
+                        help="Force reuse of existing database without confirmation")
 
     args = parser.parse_args()
 
+    # Extract video ID
+    video_id = extract_video_id(args.youtube_url)
+
+    # Check if we need to run the analysis
+    run_analysis = True
+    if CURRENT_VIDEO_ID == video_id and os.path.exists(CHROMA_PATH) and args.reuse_db:
+        print(f"Using existing analysis for video ID: {video_id}")
+        run_analysis = False
+
     # Check if a question was asked
     if args.question:
-        print(f"Analyzing comments for: {args.youtube_url}")
         # First make sure we've analyzed the comments
-        analyze_youtube_comments(args.youtube_url, args.api_key)
+        if run_analysis:
+            print(f"Analyzing comments for: {args.youtube_url}")
+            analyze_youtube_comments(args.youtube_url, args.api_key)
 
         # Then answer the question
         print(f"\nQuestion: {args.question}")
         print("\nSearching for answer...")
-        answer = answer_question(args.question)
+        answer = answer_question(args.question, k=args.k)
         print("\nAnswer:")
         print(answer)
     else:
         # Regular analysis
-        results = analyze_youtube_comments(args.youtube_url, args.api_key)
+        if run_analysis:
+            results = analyze_youtube_comments(args.youtube_url, args.api_key)
 
-        # Print a summary of results
-        print("\n===== ANALYSIS RESULTS =====")
-        print(f"Video ID: {results['video_id']}")
-        print(f"Total comments analyzed: {results['comment_count']}")
-        print(f"Sentiment distribution: {results['sentiment_counts']['positive']} positive, "
-              f"{results['sentiment_counts']['negative']} negative, "
-              f"{results['sentiment_counts']['neutral']} neutral")
-        print("Output files:")
-        for name, path in results['output_files'].items():
-            print(f"- {name}: {path}")
+            # Print a summary of results
+            print("\n===== ANALYSIS RESULTS =====")
+            print(f"Video ID: {results['video_id']}")
+            print(f"Total comments analyzed: {results['comment_count']}")
+            print(f"Sentiment distribution: {results['sentiment_counts']['positive']} positive, "
+                  f"{results['sentiment_counts']['negative']} negative, "
+                  f"{results['sentiment_counts']['neutral']} neutral")
+            print("Output files:")
+            for name, path in results['output_files'].items():
+                print(f"- {name}: {path}")
+        else:
+            print("To perform a new analysis, run without the --reuse-db flag.")
+            print("To ask a question about the existing analysis, use the --question parameter.")
