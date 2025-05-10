@@ -444,3 +444,154 @@ header {
   white-space: pre-wrap;
   font-family: Arial, sans-serif;
 }
+
+/* Enhanced QA UI */
+#answer-content {
+  margin-top: 0;
+  background-color: #f9f9f9;
+  border-left: 4px solid #007BFF;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+#answer-content p {
+  font-size: 16px;
+  line-height: 1.6;
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #333;
+}
+
+#answer-content p:last-child {
+  margin-bottom: 0;
+}
+
+/* Better stats display */
+.stats-area {
+  background-color: #f0f8ff;
+  border-radius: 8px;
+  padding: 8px 16px;
+  margin: 10px 0 15px 0;
+  font-size: 14px;
+  color: #666;
+  text-align: right;
+  border-left: 2px solid #ddd;
+}
+
+.processing-time {
+  font-family: monospace;
+  font-weight: bold;
+  color: #555;
+}
+
+/* Improve advanced options section */
+.advanced-options {
+  margin: 10px 0 15px 0;
+  padding: 12px 15px;
+  background-color: #f8f8f8;
+  border-radius: 8px;
+  border: 1px solid #eee;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.k-slider-label {
+  margin-right: 10px;
+  font-size: 14px;
+  color: #555;
+  cursor: help;
+  display: flex;
+  align-items: center;
+}
+
+#k-value {
+  background: #007BFF;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 5px;
+  font-weight: bold;
+}
+
+#k-slider {
+  flex: 1;
+  margin: 0;
+  height: 5px;
+}
+
+/* Better visual indication when answer is displayed */
+#answer-content {
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* Improve formatting of lists and headings in answers */
+#answer-content ul,
+#answer-content ol {
+  margin: 10px 0 15px 0;
+  padding-left: 25px;
+}
+
+#answer-content li {
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+#answer-content h1,
+#answer-content h2,
+#answer-content h3,
+#answer-content h4 {
+  color: #333;
+  margin-top: 20px;
+  margin-bottom: 10px;
+}
+
+#answer-content h2 {
+  font-size: 22px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 5px;
+}
+
+#answer-content h3 {
+  font-size: 18px;
+}
+
+/* Make the Ask button more prominent */
+.ask-button {
+  width: 100%;
+  padding: 12px 20px;
+  font-size: 16px;
+  background-color: #007BFF;
+  margin-bottom: 20px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: all 0.2s ease;
+}
+
+.ask-button:hover {
+  background-color: #0062cc;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+/* Improve textarea styling */
+#question {
+  width: 100%;
+  padding: 15px;
+  font-size: 16px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  min-height: 120px;
+  margin-bottom: 15px;
+  resize: vertical;
+  font-family: 'Source Sans Pro', sans-serif;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+#question:focus {
+  outline: none;
+  border-color: #007BFF;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
+}
