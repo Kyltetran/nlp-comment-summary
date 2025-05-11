@@ -595,3 +595,104 @@ header {
   border-color: #007BFF;
   box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
 }
+
+/* Enhanced k information display */
+.k-info {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  background-color: #f0f7ff;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #555;
+  line-height: 1.4;
+}
+
+#total-comment-count {
+  color: #007BFF;
+  font-weight: bold;
+}
+
+.guidance-text {
+  font-style: italic;
+  color: #666;
+  font-size: 13px;
+}
+
+/* Improve advanced options section */
+.advanced-options {
+  margin: 10px 0 15px 0;
+  padding: 12px 15px;
+  background-color: #f8f8f8;
+  border-radius: 8px;
+  border: 1px solid #eee;
+  display: flex;
+  flex-direction: column;
+}
+
+.k-slider-container {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+}
+
+.k-slider-label {
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: #555;
+  cursor: help;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#k-value {
+  background: #007BFF;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-left: 5px;
+  font-weight: bold;
+  min-width: 45px;
+  text-align: center;
+}
+
+#k-slider {
+  width: 100%;
+  margin: 0;
+  height: 6px;
+}
+
+/* Stats display */
+.stats-area {
+  background-color: #f0f8ff;
+  border-radius: 8px;
+  padding: 8px 16px;
+  margin: 10px 0 15px 0;
+  font-size: 14px;
+  color: #666;
+  text-align: right;
+  border-left: 2px solid #007BFF;
+}
+
+.processing-time {
+  font-family: monospace;
+  font-weight: bold;
+  color: #555;
+}
+
+/* Responsive adjustments */
+@media (max-width: 599px) {
+  .advanced-options {
+    padding: 10px;
+  }
+
+  .k-info, .k-slider-container {
+    width: 100%;
+  }
+}
+
+@media (min-width: 600px) {
+  .k-slider-container {
+    width: 100%;
+  }
+}
