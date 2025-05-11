@@ -420,9 +420,9 @@ def generate_positive_summary_from_vector(query="Summarize main point of these c
     Please summarize the main points expressed in these positive comments.
     Return only a bullet-point list of the main takeaways with the layout of 1 line break for each point.
     Start the summary with bullet points right away, and do not include any other text.
-    Note that if there are two much main point, you should try to include it into 2-3 top main points related to positive comments.
-    You don't need to nessarily include 3 main points all the time, it can be 1 or 2 if there are not too much main points.
+    Note that just include 2-3 top main points related to positive comments.
     If the positive comments are empty, just say "No positive comments found."
+    Do not summarize any negative or neutral comments if they are present.
     """
     docs = find_related_positive(query)
     context = "\n".join([doc.page_content for doc in docs])
@@ -444,8 +444,7 @@ def generate_negative_summary_from_vector(query="Summarize main point of the neg
     Please summarize the main points expressed in these negative comments
     Return only a bullet-point list of the main takeaways with the layout of 1 line break for each point.
     Start the summary with bullet points right away, and do not include any other text.
-    Note that if there are too many main points about negative comment, you should try to include 2-3 main points related to negative comments.
-    You don't need to nessarily include 3 main points all the time, it can be 1 or 2 if there are not too much main points.
+    Note that  just include 2-3 main points related to negative comments.
     If the negative comments are empty, just say "No negative comments found."
     Do not summarize any positive or neutral comments if they are present.
     
