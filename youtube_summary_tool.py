@@ -402,6 +402,13 @@ def find_related_negative(query, k=200):
     """Find related negative comments for a query."""
     return NEGATIVE_VECTOR_DB.similarity_search(query, k=k)
 
+def reset_sentiment_vector_dbs():
+    """Clear the in-memory sentiment vector databases for new video analysis."""
+    global POSITIVE_VECTOR_DB, NEGATIVE_VECTOR_DB
+    POSITIVE_VECTOR_DB = InMemoryVectorStore(embedding=EMBEDDING_MODEL)
+    NEGATIVE_VECTOR_DB = InMemoryVectorStore(embedding=EMBEDDING_MODEL)
+    print("Reset in-memory sentiment vector databases.")
+
 
 def generate_positive_summary_from_vector(query="Summarize main point of these comments."):
     PROMPT_TEMPLATE_POSITIVE = """
@@ -413,7 +420,9 @@ def generate_positive_summary_from_vector(query="Summarize main point of these c
     Please summarize the main points expressed in these positive comments.
     Return only a bullet-point list of the main takeaways with the layout of 1 line break for each point.
     Start the summary with bullet points right away, and do not include any other text.
-    Note that just include 2-3 main points related to positive comments.
+    Note that if there are two much main point, you should try to include it into 2-3 top main points related to positive comments.
+    You don't need to nessarily include 3 main points all the time, it can be 1 or 2 if there are not too much main points.
+    If the positive comments are empty, just say "No positive comments found."
     """
     docs = find_related_positive(query)
     context = "\n".join([doc.page_content for doc in docs])
@@ -435,9 +444,10 @@ def generate_negative_summary_from_vector(query="Summarize main point of the neg
     Please summarize the main points expressed in these negative comments
     Return only a bullet-point list of the main takeaways with the layout of 1 line break for each point.
     Start the summary with bullet points right away, and do not include any other text.
-    Note that just include 2-3 main points related to negative comments. Do summarize any positive or neutral comments if they are present.
-    If the negative comments are not enough, just say "No negative comments found."
-    
+    Note that if there are too many main points about negative comment, you should try to include 2-3 main points related to negative comments.
+    You don't need to nessarily include 3 main points all the time, it can be 1 or 2 if there are not too much main points.
+    If the negative comments are empty, just say "No negative comments found."
+    Do not summarize any positive or neutral comments if they are present.
     
     """
     docs = find_related_negative(query)
@@ -512,6 +522,7 @@ def analyze_youtube_comments(youtube_url, api_key="AIzaSyDj7I12G6kpxEt4esWYXh2Xw
 
     # Step 3: Read comments from Chroma
     raw_comments = read_comments_from_chroma()
+    reset_sentiment_vector_dbs()
 
     # Step 4: Generate overall comment summary
     print("Generating overall comment summary...")
