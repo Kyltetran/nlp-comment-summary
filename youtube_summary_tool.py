@@ -32,13 +32,20 @@ from langchain_ollama.llms import OllamaLLM
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
 
 # Download required NLTK data
-nltk.download('vader_lexicon', quiet=True)
 nltk.download('punkt', quiet=True)
 nltk.download('stopwords', quiet=True)
 nltk.download('wordnet', quiet=True)
 
+# Load HuggingFace transformer model
+MODEL_NAME = "AmaanP314/youtube-xlm-roberta-base-sentiment-multilingual"
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+hf_model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+# Label mapping for the model
+label_mapping = {0: "Negative", 1: "Neutral", 2: "Positive"}
 # Global constants
 CHROMA_PATH = "chroma"
 
@@ -507,36 +514,14 @@ def generate_comment_summary():
 
 
 # ---------------------------------- PREPROCESSING ----------------------------------#
-
-
-def find_emoticons(string):
-    """Convert emoticons to text descriptions."""
-    happy_faces = [' :D', ' :)', ' (:', ' =D', ' =)',
-                   ' (=', ' ;D', ' ;)', ' :-)', ' ;-)', ' ;-D', ' :-D']
-    sad_faces = [' D:', ' :(', ' ):', ' =(', ' D=', ' )=', ' ;(',
-                 ' D;', ' )-:', ' )-;', ' D-;', ' D-:', ' :/', ' :-/', ' =/']
-    neutral_faces = [' :P', ' :*', '=P', ' =S',
-                     ' =*', ' ;*', ' :-|', ' :-*', ' =-P', ' =-S']
-    for face in happy_faces:
-        if face in string:
-            string = string.replace(face, ' happy_face ')
-    for face in sad_faces:
-        if face in string:
-            string = string.replace(face, ' sad_face ')
-    for face in neutral_faces:
-        if face in string:
-            string = string.replace(face, ' neutral_face ')
-    return string
-
-
 def preprocess_for_sentiment(comment_list):
     """Preprocess comments for sentiment analysis."""
     processed_comments = []
     for comment in comment_list:
         # Deconvert emojis
-        comment = emoji.demojize(comment)
-        # Replace emoticons like :) or :( with label
-        comment = find_emoticons(comment)
+        # comment = emoji.demojize(comment)
+        # # Replace emoticons like :) or :( with label
+        # comment = find_emoticons(comment)
         # Remove URLs
         comment = re.sub(r'http\S+|www\S+|https\S+|t\.co\S+', '', comment)
         comment = unidecode(comment)
@@ -569,34 +554,22 @@ def preprocess_comment_for_wordcloud(comment_list):
 # ---------------------------------- SENTIMENT ANALYSIS ----------------------------------#
 
 def analyze_sentiment(comments):
-    """Analyze sentiment of comments using VADER."""
-    # Initialize the sentiment analyzer
-    analyzer = SentimentIntensityAnalyzer()
+    inputs = tokenizer(comments, return_tensors="pt", padding=True, truncation=True)
+    with torch.no_grad():
+        outputs = hf_model(**inputs)
+    predictions = torch.argmax(outputs.logits, dim=1)
 
-    comments_positive = []
-    comments_negative = []
-    comments_neutral = []
-
-    # Count the number of neutral, positive, and negative comments
-    num_neutral = 0
-    num_positive = 0
-    num_negative = 0
-
-    for comment in comments:
-        sentiment_scores = analyzer.polarity_scores(comment)
-        if sentiment_scores['compound'] > 0.0:
-            num_positive += 1
-            comments_positive.append(comment)
-        elif sentiment_scores['compound'] < 0.0:
-            num_negative += 1
-            comments_negative.append(comment)
+    positives, neutrals, negatives = [], [], []
+    for comment, label in zip(comments, predictions):
+        label = label.item()
+        if label == 2:
+            positives.append(comment)
+        elif label == 1:
+            neutrals.append(comment)
         else:
-            comments_neutral.append(comment)
-            num_neutral += 1
+            negatives.append(comment)
 
-    results = [num_neutral, num_positive, num_negative]
-    # Return the results and categorized comments
-    return results, comments_positive, comments_negative, comments_neutral
+    return [len(neutrals), len(positives), len(negatives)], positives, negatives, neutrals
 
 
 matplotlib.use('Agg')
@@ -693,7 +666,9 @@ def generate_positive_summary_from_vector(query="Summarize main point of these c
     Please summarize the main points expressed in these positive comments.
     Return only a bullet-point list of the main takeaways with the layout of 1 line break for each point.
     Start the summary with bullet points right away, and do not include any other text.
-    Note that just include 2-3 main points.
+    Note that just include 0-3 main points.
+    Do not include any negative comments or neutral comments in the summary if they are present.
+    
     """
     docs = find_related_positive(query)
     context = "\n".join([doc.page_content for doc in docs])
@@ -715,7 +690,8 @@ def generate_negative_summary_from_vector(query="Summarize main point of the neg
     Please summarize the main points expressed in these negative comments
     Return only a bullet-point list of the main takeaways with the layout of 1 line break for each point.
     Start the summary with bullet points right away, and do not include any other text.
-    Note that just include 2-3 main points.
+    Note that just include 0-3 main points related to the negative comments.
+    Do not include any the positive comments or neutral comments if they are present.
     """
     docs = find_related_negative(query)
     context = "\n".join([doc.page_content for doc in docs])
@@ -800,14 +776,16 @@ def analyze_youtube_comments(youtube_url, api_key="AIzaSyDj7I12G6kpxEt4esWYXh2Xw
     # Step 6: Perform sentiment analysis
     sentiment_results, positive_comments, negative_comments, neutral_comments = analyze_sentiment(
         processed_comments)
-
+    
+    print("Positive comments:", positive_comments)
+    print("Negative comments:", negative_comments)
     # Step 7: Create sentiment visualization
     print("Creating visualizations...")
     sentiment_chart = plot_sentiment_pie_chart(sentiment_results)
     sentiment_chart.savefig("sentiment_pie_chart.png")
 
     # Step 8: Generate word cloud
-    wordcloud = generate_wordcloud(processed_comments)
+    wordcloud = generate_wordcloud(raw_comments)
     wordcloud.savefig("comment_wordcloud.png")
 
     # Step 9: Summarize positive and negative comments
