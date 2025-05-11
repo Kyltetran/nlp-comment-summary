@@ -83,15 +83,13 @@ def ask_question_api():
 
         # Use the improved answer_question function with auto-calculated or user-specified k
         start_time = time.time()
-        answer = answer_question(question, k=k)
-        processing_time = time.time() - start_time
+        result = answer_question(question, k=k)
 
+        processing_time = time.time() - start_time
         print(f"Question answered in {processing_time:.2f} seconds")
 
-        return jsonify({
-            'answer': answer,
-            'processing_time': f"{processing_time:.2f} seconds"
-        })
+        # The result already includes the answer, k_used, and other metadata
+        return jsonify(result)
     except Exception as e:
         print(f"Error in Q&A: {str(e)}")
         return jsonify({'error': str(e)}), 500
