@@ -60,8 +60,17 @@
           <div class="ask-more-container">
              <textarea id="question" placeholder="Ask a specific question about the comments..."></textarea>
              <div class="advanced-options">
-                <label class="k-slider-label" title="Higher values include more comments but may be slower">Comment sample size: <span id="k-value">Auto</span></label>
-                <input type="range" id="k-slider" min="0" max="400" value="0" title="0 = Automatic, higher values include more comments but may be slower">
+                <div class="k-info">
+                   <span id="comment-count-info">Available comments: <b id="total-comment-count">0</b></span>
+                   <br>
+                   <span id="k-guidance" class="guidance-text">Waiting for data...</span>
+                </div>
+                <div class="k-slider-container">
+                   <label class="k-slider-label" title="Higher values include more comments but may be slower">
+                       Comment sample size: <span id="k-value">Auto</span>
+                   </label>
+                   <input type="range" id="k-slider" min="0" max="400" value="0" title="0 = Automatic, higher values = more comments">
+                </div>
              </div>
              <button id="ask-button" class="ask-button">Ask</button>
              <div id="qa-loading" class="loading-container" style="display: none;">
@@ -86,10 +95,86 @@
           const kValue = document.getElementById('k-value');
           let currentVideoId = null;
 
+          // Function to calculate optimal k value (matching the Python implementation)
+          function calculateOptimalK(totalComments) {
+              // For very small comment sets (<50), use a higher percentage (60-70%)
+              if (totalComments < 50) {
+                  return Math.max(10, Math.min(Math.floor(totalComments * 0.7), totalComments));
+              }
+
+              // For small comment sets (50-200), scale between 40-30% of total
+              else if (totalComments < 200) {
+                  // Linear scaling from 40% at 50 comments to 30% at 200 comments
+                  const percent = 0.4 - ((totalComments - 50) / 150) * 0.1;
+                  return Math.max(20, Math.min(Math.floor(totalComments * percent), totalComments));
+              }
+
+              // For medium comment sets (200-1000), scale between 30-20% of total
+              else if (totalComments < 1000) {
+                  // Linear scaling from 30% at 200 comments to 20% at 1000 comments
+                  const percent = 0.3 - ((totalComments - 200) / 800) * 0.1;
+                  return Math.max(60, Math.min(Math.floor(totalComments * percent), totalComments));
+              }
+
+              // For large comment sets (1000-5000), scale between 20-10% of total
+              else if (totalComments < 5000) {
+                  // Linear scaling from 20% at 1000 comments to 10% at 5000 comments
+                  const percent = 0.2 - ((totalComments - 1000) / 4000) * 0.1;
+                  return Math.max(200, Math.min(Math.floor(totalComments * percent), 500));
+              }
+
+              // For very large comment sets (>5000), use 10% with a cap at 600
+              else {
+                  return Math.min(Math.floor(totalComments * 0.1), 600);
+              }
+          }
+
+          // Function to update k guidance based on comment count
+          function updateKGuidance(commentCount) {
+              const kGuidance = document.getElementById('k-guidance');
+              const totalCommentCount = document.getElementById('total-comment-count');
+
+              // Update comment count display
+              totalCommentCount.textContent = commentCount;
+
+              // Provide appropriate guidance based on comment count
+              if (commentCount < 50) {
+                  kGuidance.textContent = `For ${commentCount} comments, try values between 10-${Math.min(commentCount, 40)}`;
+              } else if (commentCount < 200) {
+                  kGuidance.textContent = `For ${commentCount} comments, try values between 20-${Math.min(commentCount, 80)}`;
+              } else if (commentCount < 1000) {
+                  kGuidance.textContent = `For ${commentCount} comments, try values between 60-${Math.min(commentCount, 300)}`;
+              } else if (commentCount < 5000) {
+                  kGuidance.textContent = `For ${commentCount} comments, try values between 200-500`;
+              } else {
+                  kGuidance.textContent = `For ${commentCount} comments, try values between 300-600`;
+              }
+          }
+
+          // Initialize k slider based on comment count
+          function initializeKSlider(commentCount) {
+              // Calculate optimal k
+              const optimalK = calculateOptimalK(commentCount);
+
+              // Set slider max based on comment count (with reasonable limits)
+              kSlider.max = Math.min(Math.max(commentCount, 100), 600);
+
+              // Store optimal k for reference
+              kSlider.dataset.optimalK = optimalK;
+
+              // Update initial text
+              kValue.textContent = `Auto (${optimalK})`;
+          }
+
           // Handle k-slider changes
           kSlider.addEventListener('input', function() {
              const val = parseInt(this.value);
-             kValue.textContent = val === 0 ? "Auto" : val;
+             const optimalK = this.dataset.optimalK || "?";
+             if (val === 0) {
+                kValue.textContent = `Auto (${optimalK})`;
+             } else {
+                kValue.textContent = val;
+             }
           });
 
           form.addEventListener('submit', function(e) {
@@ -116,12 +201,11 @@
                 answerContent.style.display = 'none';
                 answerStats.style.display = 'none';
 
-                // Get k value from slider (0 means auto)
-                const kVal = parseInt(kSlider.value);
-                const k = kVal === 0 ? null : kVal;
+                // Get k value from slider
+                const sliderValue = parseInt(kSlider.value);
 
                 // Call the backend to answer the question
-                askQuestion(question, k);
+                askQuestion(question, sliderValue === 0 ? null : sliderValue);
              }
           });
 
@@ -180,6 +264,11 @@
              // Update the word cloud tab
              document.getElementById('wordcloud-image').src = data.output_files.wordcloud + '?t=' + new Date().getTime();
 
+             // Update comment count info and initialize k slider for QA section
+             const commentCount = data.comment_count;
+             updateKGuidance(commentCount);
+             initializeKSlider(commentCount);
+
              // Clear any previous Q&A results
              document.getElementById('question').value = '';
              answerContent.innerHTML = '';
@@ -232,7 +321,15 @@
 
                 // Display processing stats if available
                 if (data.processing_time) {
-                   answerStats.innerHTML = `<span class="processing-time">Processing time: ${data.processing_time}</span>`;
+                   const commentCount = data.comments_total || "?";
+                   const kUsed = data.k_used || "?";
+
+                   answerStats.innerHTML = `
+                       <span class="processing-time">
+                           Used ${kUsed} out of ${commentCount} comments for context.
+                           Processing time: ${data.processing_time}
+                       </span>
+                   `;
                    answerStats.style.display = 'block';
                 }
 
@@ -259,9 +356,12 @@
 
                   if (data.metadata && data.metadata.comment_count) {
                      // Set max value for k-slider based on comment count
-                     const maxK = Math.min(Math.max(data.metadata.comment_count, 100), 400);
-                     kSlider.max = maxK;
-                     console.log(`Set max k value to ${maxK} based on ${data.metadata.comment_count} comments`);
+                     const commentCount = data.metadata.comment_count;
+                     console.log(`Found ${commentCount} comments in database`);
+
+                     // Initialize QA interface with comment count
+                     updateKGuidance(commentCount);
+                     initializeKSlider(commentCount);
                   }
                }
             })
