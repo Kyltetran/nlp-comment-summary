@@ -1,4 +1,23 @@
 # First, regular imports
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.vectorstores import InMemoryVectorStore
+from langchain_ollama import OllamaEmbeddings
+from langchain_ollama.llms import OllamaLLM
+from langchain.prompts import ChatPromptTemplate
+from langchain_chroma import Chroma
+from langchain.schema.document import Document
+from wordcloud import WordCloud
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from unidecode import unidecode
+import nltk
+import emoji
+from googleapiclient import discovery
+import matplotlib.pyplot as plt
 import argparse
 import os
 import shutil
@@ -13,32 +32,16 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 
 # Now it's safe to import pyplot
-import matplotlib.pyplot as plt
-from googleapiclient import discovery
 
 # Continue with the rest of your imports
-import emoji
-import nltk
-from unidecode import unidecode
-from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-from wordcloud import WordCloud
-from langchain.schema.document import Document
-from langchain_chroma import Chroma
-from langchain.prompts import ChatPromptTemplate
-from langchain_ollama.llms import OllamaLLM
-from langchain_ollama import OllamaEmbeddings
-from langchain_core.vectorstores import InMemoryVectorStore
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import torch
 
 # Download required NLTK data
 nltk.download('punkt', quiet=True)
 nltk.download('stopwords', quiet=True)
 nltk.download('wordnet', quiet=True)
+# Download required NLTK data
+nltk.download('vader_lexicon', quiet=True)
+
 
 # Load HuggingFace transformer model
 MODEL_NAME = "AmaanP314/youtube-xlm-roberta-base-sentiment-multilingual"
@@ -65,6 +68,7 @@ def close_chroma_connection():
     import gc
     gc.collect()
     time.sleep(1)  # Give a moment for resources to be released
+
 
 def get_embedding_function():
     """Returns the embedding function for vector database."""
@@ -186,6 +190,51 @@ def get_comments(video_id, api_key):
     return comments
 
 
+def get_chroma_db(video_id):
+    """Create and return a Chroma database connection with proper error handling."""
+    global CHROMA_PATH, CURRENT_VIDEO_ID
+
+    try:
+        # Set up directory path for this specific video
+        video_specific_path = os.path.join(CHROMA_PATH, video_id)
+        os.makedirs(video_specific_path, exist_ok=True)
+
+        # Create a client without persistence first to avoid tenant errors
+        db = Chroma(
+            collection_name=f"comments_{video_id}",
+            embedding_function=get_embedding_function(),
+            persist_directory=video_specific_path
+        )
+
+        # Update the current video ID
+        CURRENT_VIDEO_ID = video_id
+
+        print(
+            f"Successfully connected to Chroma database for video ID: {video_id}")
+        return db
+
+    except Exception as e:
+        print(f"Error connecting to Chroma database: {e}")
+        # Create an alternative path with timestamp if there's an issue
+        timestamp = int(time.time())
+        alt_path = os.path.join(CHROMA_PATH, f"{video_id}_{timestamp}")
+        os.makedirs(alt_path, exist_ok=True)
+
+        print(f"Attempting to create alternative database at {alt_path}")
+
+        # Try with the alternative path
+        try:
+            db = Chroma(
+                collection_name=f"comments_{video_id}_{timestamp}",
+                embedding_function=get_embedding_function(),
+                persist_directory=alt_path
+            )
+            return db
+        except Exception as e2:
+            print(f"Failed to create alternative database: {e2}")
+            raise RuntimeError(f"Cannot initialize Chroma database: {e2}")
+
+
 def save_comments_to_chroma(comments, video_id):
     """
         Populate comments into Chroma database, clearing previous data if video ID changed.
@@ -206,25 +255,36 @@ def save_comments_to_chroma(comments, video_id):
 
     # If video ID changed or no database exists, rebuild it
     if os.path.exists(CHROMA_PATH):
-        print(f"Video ID changed from {CURRENT_VIDEO_ID} to {video_id}. Removing existing Chroma database.")
+        print(
+            f"Video ID changed from {CURRENT_VIDEO_ID} to {video_id}. Removing existing Chroma database.")
 
         # Close any open connections before removing
         close_chroma_connection()
 
-        try:
-            shutil.rmtree(CHROMA_PATH)
-        except Exception as e:
-            print(f"Error removing Chroma directory: {e}")
-            # If we can't remove the directory, create a new one with a timestamp
-            timestamp = int(time.time())
-            new_chroma_path = f"{CHROMA_PATH}_{timestamp}"
-            print(f"Creating new database at {new_chroma_path}")
-            CHROMA_PATH = new_chroma_path
+        # try:
+        #     shutil.rmtree(CHROMA_PATH)
+        # except Exception as e:
+        #     print(f"Error removing Chroma directory: {e}")
+        #     # If we can't remove the directory, create a new one with a timestamp
+        #     timestamp = int(time.time())
+        #     new_chroma_path = f"{CHROMA_PATH}_{timestamp}"
+        #     print(f"Creating new database at {new_chroma_path}")
+        #     CHROMA_PATH = new_chroma_path
 
-    # Prepare the Chroma database
-    print(f"Creating new Chroma vector database for video ID: {video_id}")
-    db = Chroma(persist_directory=CHROMA_PATH,
-                embedding_function=get_embedding_function())
+        try:
+            # Instead of removing the whole directory, just create a new subfolder for this video
+            video_path = os.path.join(CHROMA_PATH, video_id)
+            os.makedirs(video_path, exist_ok=True)
+        except Exception as e:
+            print(f"Error handling Chroma directory: {e}")
+
+    # Get the Chroma database
+    db = get_chroma_db(video_id)
+
+    # # Prepare the Chroma database
+    # print(f"Creating new Chroma vector database for video ID: {video_id}")
+    # db = Chroma(persist_directory=CHROMA_PATH,
+    #             embedding_function=get_embedding_function())
 
     # Create Document objects for each comment
     documents = []
@@ -251,46 +311,105 @@ def save_comments_to_chroma(comments, video_id):
         document = Document(page_content=content, metadata=metadata)
         documents.append(document)
 
+    # # Add documents to Chroma in batches to avoid memory issues
+    # batch_size = 100
+    # for i in range(0, len(documents), batch_size):
+    #     batch = documents[i:i + batch_size]
+    #     db.add_documents(batch)
+    #     print(f"Added batch of {len(batch)} comments to Chroma (total {i + len(batch)})")
+
+    # # Update the current video ID
+    # CURRENT_VIDEO_ID = video_id
+
+    # # Save video metadata to help with QA
+    # with open(os.path.join(CHROMA_PATH, "video_metadata.json"), "w", encoding="utf-8") as f:
+    #     json.dump({
+    #         "video_id": video_id,
+    #         "comment_count": len(documents)
+    #     }, f, ensure_ascii=False, indent=2)
+
+    # print(f"Successfully added all {len(documents)} comments to Chroma database.")
+    # return len(documents)
+
     # Add documents to Chroma in batches to avoid memory issues
     batch_size = 100
     for i in range(0, len(documents), batch_size):
         batch = documents[i:i + batch_size]
         db.add_documents(batch)
-        print(f"Added batch of {len(batch)} comments to Chroma (total {i + len(batch)})")
-
-    # Update the current video ID
-    CURRENT_VIDEO_ID = video_id
+        print(
+            f"Added batch of {len(batch)} comments to Chroma (total {i + len(batch)})")
 
     # Save video metadata to help with QA
-    with open(os.path.join(CHROMA_PATH, "video_metadata.json"), "w", encoding="utf-8") as f:
+    metadata_path = os.path.join(CHROMA_PATH, video_id, "video_metadata.json")
+    with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump({
             "video_id": video_id,
             "comment_count": len(documents)
         }, f, ensure_ascii=False, indent=2)
 
-    print(f"Successfully added all {len(documents)} comments to Chroma database.")
+    print(
+        f"Successfully added all {len(documents)} comments to Chroma database.")
     return len(documents)
 
 
-def read_comments_from_chroma():
+# def read_comments_from_chroma():
+#     """Read comments from the Chroma database."""
+#     # Connect to the existing Chroma database
+#     db = Chroma(persist_directory=CHROMA_PATH,
+#                 embedding_function=get_embedding_function())
+
+#     # Get all documents from the database
+#     results = db.get()
+
+#     # Extract comments from the documents
+#     comments = []
+#     for doc in results['documents']:
+#         # Each document has format "Author [👍 Likes]:\nComment" or "Author:\nComment"
+#         # Split to get just the comment part
+#         parts = doc.split('\n', 1)
+#         if len(parts) > 1:
+#             comments.append(parts[1])  # Just the comment text, not the author
+
+#     return comments
+
+def read_comments_from_chroma(video_id=None):
     """Read comments from the Chroma database."""
+    global CURRENT_VIDEO_ID
+
+    # Use current video ID if none specified
+    if video_id is None:
+        video_id = CURRENT_VIDEO_ID
+
+    if video_id is None:
+        raise ValueError("No video ID specified and no current video ID set")
+
     # Connect to the existing Chroma database
-    db = Chroma(persist_directory=CHROMA_PATH,
-                embedding_function=get_embedding_function())
+    try:
+        video_specific_path = os.path.join(CHROMA_PATH, video_id)
+        db = Chroma(
+            collection_name=f"comments_{video_id}",
+            embedding_function=get_embedding_function(),
+            persist_directory=video_specific_path
+        )
 
-    # Get all documents from the database
-    results = db.get()
+        # Get all documents from the database
+        results = db.get()
 
-    # Extract comments from the documents
-    comments = []
-    for doc in results['documents']:
-        # Each document has format "Author [👍 Likes]:\nComment" or "Author:\nComment"
-        # Split to get just the comment part
-        parts = doc.split('\n', 1)
-        if len(parts) > 1:
-            comments.append(parts[1])  # Just the comment text, not the author
+        # Extract comments from the documents
+        comments = []
+        for doc in results['documents']:
+            # Each document has format "Author [👍 Likes]:\nComment" or "Author:\nComment"
+            # Split to get just the comment part
+            parts = doc.split('\n', 1)
+            if len(parts) > 1:
+                # Just the comment text, not the author
+                comments.append(parts[1])
 
-    return comments
+        return comments
+
+    except Exception as e:
+        print(f"Error reading from Chroma database: {e}")
+        return []
 
 
 def calculate_optimal_k(total_comments):
@@ -331,13 +450,127 @@ def calculate_optimal_k(total_comments):
         return min(int(total_comments * 0.1), 600)
 
 
-def answer_question(question, k=None):
+# def answer_question(question, k=None):
+#     """
+#     Answer a question based on the YouTube comments data with improved analysis.
+
+#     Args:
+#         question: The user's question about the video comments
+#         k: Number of relevant comments to retrieve for context (auto-calculated if None)
+
+#     Returns:
+#         Dictionary with answer and metadata
+#     """
+#     # Start timing
+#     start_time = time.time()
+
+#     # Load the Chroma vector store
+#     db = Chroma(persist_directory=CHROMA_PATH,
+#                 embedding_function=get_embedding_function())
+
+#     # Get the total number of documents in the database
+#     doc_count = len(db.get()['ids'])
+
+#     # Calculate optimal k if not specified
+#     if k is None:
+#         k = calculate_optimal_k(doc_count)
+#         print(
+#             f"Auto-calculated optimal k value: {k} (based on {doc_count} total comments)")
+
+#     # Store the original k value for reporting
+#     k_used = k
+
+#     # Adjust k if it's larger than the number of available documents
+#     if k > doc_count:
+#         print(
+#             f"Adjusting k from {k} to {doc_count} (total available documents)")
+#         k = doc_count
+
+#     # Improved prompt template with better structure and instructions
+#     PROMPT_TEMPLATE = """
+#     You are a YouTube comment analyst answering questions about video comments.
+
+#     QUESTION: {question}
+
+#     Below are relevant comments from the video:
+#     {context}
+
+#     Answer the question ONLY using information in these comments. Your response should:
+
+#     1. Start with a direct answer addressing the question
+#     2. Group similar opinions together
+#     3. Include specific quotes from commenters as evidence when relevant
+#     4. Stay STRICTLY focused on the question
+
+#     For comparison or preference questions:
+#     - Use clear headings
+#     - Use bullet points for listing multiple points
+#     - Structure information logically by categories
+
+#     For numerical questions (counts, percentages, etc.):
+#     - Provide a direct numerical answer if possible
+#     - Explain how you arrived at this number
+#     - Include specific evidence from comments
+
+#     DO NOT invent information not present in the comments.
+#     DO NOT include follow-up questions or recommendations unless requested.
+#     FOCUS only on answering exactly what was asked: {question}
+#     """
+
+#     print(f"Retrieving {k} most relevant comments for the question...")
+
+#     # Retrieve relevant documents
+#     results = db.similarity_search_with_score(question, k=k)
+
+#     retrieval_time = time.time() - start_time
+#     print(f"Retrieved {len(results)} comments in {retrieval_time:.2f} seconds")
+
+#     # Sort comments by relevance score to prioritize most relevant ones
+#     sorted_results = sorted(results, key=lambda x: x[1])
+
+#     # Take only the most relevant comments to avoid overwhelming the LLM
+#     top_results = sorted_results[:min(k, len(sorted_results))]
+
+#     # Build context string from retrieved documents with comment numbering
+#     context_parts = []
+#     for i, (doc, score) in enumerate(top_results):
+#         context_parts.append(f"[{i + 1}] {doc.page_content}")
+
+#     context_text = "\n\n".join(context_parts)
+
+#     # Format prompt with context
+#     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+#     prompt = prompt_template.format(question=question, context=context_text)
+
+#     # Use OllamaLLM model to generate the answer
+#     print("Generating answer with language model...")
+#     model = OllamaLLM(model="llama3.2")
+
+#     generation_start = time.time()
+#     response_text = model.invoke(prompt)
+#     generation_time = time.time() - generation_start
+
+#     total_time = time.time() - start_time
+#     print(f"Answer generated in {generation_time:.2f} seconds")
+#     print(f"Total processing time: {total_time:.2f} seconds")
+
+#     # Return both the answer and metadata
+#     return {
+#         'answer': response_text,
+#         'k_used': k_used,
+#         'comments_total': doc_count,
+#         'processing_time': f"{total_time:.2f} seconds"
+#     }
+
+# Modified answer_question function
+def answer_question(question, k=None, video_id=None):
     """
     Answer a question based on the YouTube comments data with improved analysis.
 
     Args:
         question: The user's question about the video comments
         k: Number of relevant comments to retrieve for context (auto-calculated if None)
+        video_id: Specific video ID to use (defaults to current)
 
     Returns:
         Dictionary with answer and metadata
@@ -345,25 +578,50 @@ def answer_question(question, k=None):
     # Start timing
     start_time = time.time()
 
-    # Load the Chroma vector store
-    db = Chroma(persist_directory=CHROMA_PATH,
-                embedding_function=get_embedding_function())
+    global CURRENT_VIDEO_ID
+    if video_id is None:
+        video_id = CURRENT_VIDEO_ID
+
+    if video_id is None:
+        raise ValueError("No video ID specified and no current video ID set")
+
+    # Connect to the Chroma vector store for this specific video
+    video_specific_path = os.path.join(CHROMA_PATH, video_id)
+    db = Chroma(
+        collection_name=f"comments_{video_id}",
+        embedding_function=get_embedding_function(),
+        persist_directory=video_specific_path
+    )
 
     # Get the total number of documents in the database
-    doc_count = len(db.get()['ids'])
+    try:
+        doc_count = len(db.get()['ids'])
+    except:
+        print("Could not get document count, defaulting to 0")
+        doc_count = 0
 
     # Calculate optimal k if not specified
     if k is None:
         k = calculate_optimal_k(doc_count)
-        print(f"Auto-calculated optimal k value: {k} (based on {doc_count} total comments)")
+        print(
+            f"Auto-calculated optimal k value: {k} (based on {doc_count} total comments)")
 
     # Store the original k value for reporting
     k_used = k
 
     # Adjust k if it's larger than the number of available documents
     if k > doc_count:
-        print(f"Adjusting k from {k} to {doc_count} (total available documents)")
+        print(
+            f"Adjusting k from {k} to {doc_count} (total available documents)")
         k = doc_count
+
+    if k == 0:
+        return {
+            'answer': "There are no comments available to analyze. Please check if the video exists and has public comments.",
+            'k_used': 0,
+            'comments_total': 0,
+            'processing_time': "0.00 seconds"
+        }
 
     # Improved prompt template with better structure and instructions
     PROMPT_TEMPLATE = """
@@ -399,7 +657,17 @@ def answer_question(question, k=None):
     print(f"Retrieving {k} most relevant comments for the question...")
 
     # Retrieve relevant documents
-    results = db.similarity_search_with_score(question, k=k)
+    try:
+        results = db.similarity_search_with_score(question, k=k)
+    except Exception as e:
+        print(f"Error during similarity search: {e}")
+        return {
+            'answer': "An error occurred while retrieving comments. Please try again.",
+            'k_used': k_used,
+            'comments_total': doc_count,
+            'processing_time': f"{time.time() - start_time:.2f} seconds",
+            'error': str(e)
+        }
 
     retrieval_time = time.time() - start_time
     print(f"Retrieved {len(results)} comments in {retrieval_time:.2f} seconds")
@@ -442,75 +710,196 @@ def answer_question(question, k=None):
     }
 
 
-def generate_comment_summary():
+# def generate_comment_summary():
+#     """Generate a general summary of all comments with improved diversity."""
+#     # Load the Chroma vector store
+#     db = Chroma(persist_directory=CHROMA_PATH,
+#                 embedding_function=get_embedding_function())
+
+#     # Get the total number of documents in the database
+#     doc_count = len(db.get()['ids'])
+
+#     # Calculate appropriate k value based on document count
+#     # For summaries, we want a larger sample than for QA but not too large
+#     base_k = calculate_optimal_k(doc_count)
+#     # Double the QA k, but don't exceed doc count
+#     k = min(base_k * 2, doc_count)
+
+#     print(f"Using k={k} for summary (based on {doc_count} total comments)")
+
+#     # Use a more balanced prompt that emphasizes diversity
+#     PROMPT_TEMPLATE = """
+#     You are a YouTube comment summarizer. Below is a collection of user comments extracted from a video.
+
+#     {context}
+
+#     ---
+
+#     Please write a summary highlighting the key points and general sentiment expressed in these comments.
+#     Focus on providing a well-rounded overview in less than 5 paragraphs.
+
+#     IMPORTANT: Make sure to cover diverse topics from the comments. Do not focus too much on any single
+#     topic or theme, even if many comments discuss it. Instead, try to capture the overall breadth of
+#     topics and opinions present across ALL comments.
+#     """
+
+#     # Get a mix of targeted and random comments for better diversity
+#     similarity_k = k // 2
+#     random_k = k - similarity_k
+
+#     print(
+#         f"Retrieving {similarity_k} targeted comments and {random_k} random comments for summary...")
+
+#     # Get targeted comments using similarity search
+#     results1 = db.similarity_search_with_score(
+#         "summarize youtube comments", k=similarity_k)
+
+#     # Get random comments for diversity
+#     import random
+#     all_docs = db.get()
+#     random_indices = random.sample(range(doc_count), min(random_k, doc_count))
+#     random_docs = [(Document(page_content=all_docs['documents'][i]), 1.0)
+#                    for i in random_indices]
+
+#     # Combine both sets
+#     combined_results = results1 + random_docs
+
+#     # Build context string from retrieved documents
+#     context_text = "\n\n---\n\n".join(
+#         [doc.page_content for doc, _score in combined_results])
+
+#     # Format prompt with context
+#     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+#     prompt = prompt_template.format(context=context_text)
+
+#     # Use OllamaLLM model
+#     print("Generating summary with language model...")
+#     model = OllamaLLM(model="llama3.2")
+#     response_text = model.invoke(prompt)
+
+#     # Save the output to a file
+#     with open("overall_summary.txt", "w", encoding="utf-8") as f:
+#         f.write(response_text)
+
+#     print("Overall summary saved to overall_summary.txt")
+#     return response_text
+
+
+def generate_comment_summary(video_id=None):
     """Generate a general summary of all comments with improved diversity."""
-    # Load the Chroma vector store
-    db = Chroma(persist_directory=CHROMA_PATH,
-                embedding_function=get_embedding_function())
+    global CURRENT_VIDEO_ID
 
-    # Get the total number of documents in the database
-    doc_count = len(db.get()['ids'])
+    # Use current video ID if none provided
+    if video_id is None:
+        video_id = CURRENT_VIDEO_ID
 
-    # Calculate appropriate k value based on document count
-    # For summaries, we want a larger sample than for QA but not too large
-    base_k = calculate_optimal_k(doc_count)
-    k = min(base_k * 2, doc_count)  # Double the QA k, but don't exceed doc count
+    if video_id is None:
+        raise ValueError("No video ID specified and no current video ID set")
 
-    print(f"Using k={k} for summary (based on {doc_count} total comments)")
+    # Connect to the Chroma vector store for this specific video
+    try:
+        video_specific_path = os.path.join(CHROMA_PATH, video_id)
+        db = Chroma(
+            collection_name=f"comments_{video_id}",
+            embedding_function=get_embedding_function(),
+            persist_directory=video_specific_path
+        )
 
-    # Use a more balanced prompt that emphasizes diversity
-    PROMPT_TEMPLATE = """
-    You are a YouTube comment summarizer. Below is a collection of user comments extracted from a video.
+        # Get the total number of documents in the database
+        try:
+            doc_count = len(db.get()['ids'])
+        except:
+            print("Could not get document count, defaulting to 0")
+            doc_count = 0
 
-    {context}
+        if doc_count == 0:
+            print("No comments found to summarize")
+            return "No comments available to summarize."
 
-    ---
+        # Calculate appropriate k value based on document count
+        # For summaries, we want a larger sample than for QA but not too large
+        base_k = calculate_optimal_k(doc_count)
+        # Double the QA k, but don't exceed doc count
+        k = min(base_k * 2, doc_count)
 
-    Please write a summary highlighting the key points and general sentiment expressed in these comments.
-    Focus on providing a well-rounded overview in less than 5 paragraphs.
-    
-    IMPORTANT: Make sure to cover diverse topics from the comments. Do not focus too much on any single 
-    topic or theme, even if many comments discuss it. Instead, try to capture the overall breadth of 
-    topics and opinions present across ALL comments.
-    """
+        print(f"Using k={k} for summary (based on {doc_count} total comments)")
 
-    # Get a mix of targeted and random comments for better diversity
-    similarity_k = k // 2
-    random_k = k - similarity_k
+        # Use a more balanced prompt that emphasizes diversity
+        PROMPT_TEMPLATE = """
+        You are a YouTube comment summarizer. Below is a collection of user comments extracted from a video.
 
-    print(f"Retrieving {similarity_k} targeted comments and {random_k} random comments for summary...")
+        {context}
 
-    # Get targeted comments using similarity search
-    results1 = db.similarity_search_with_score("summarize youtube comments", k=similarity_k)
+        ---
 
-    # Get random comments for diversity
-    import random
-    all_docs = db.get()
-    random_indices = random.sample(range(doc_count), min(random_k, doc_count))
-    random_docs = [(Document(page_content=all_docs['documents'][i]), 1.0) for i in random_indices]
+        Please write a summary highlighting the key points and general sentiment expressed in these comments.
+        Focus on providing a well-rounded overview in less than 5 paragraphs.
+        
+        IMPORTANT: Make sure to cover diverse topics from the comments. Do not focus too much on any single 
+        topic or theme, even if many comments discuss it. Instead, try to capture the overall breadth of 
+        topics and opinions present across ALL comments.
+        """
 
-    # Combine both sets
-    combined_results = results1 + random_docs
+        # Get a mix of targeted and random comments for better diversity
+        similarity_k = k // 2
+        random_k = k - similarity_k
 
-    # Build context string from retrieved documents
-    context_text = "\n\n---\n\n".join(
-        [doc.page_content for doc, _score in combined_results])
+        print(
+            f"Retrieving {similarity_k} targeted comments and {random_k} random comments for summary...")
 
-    # Format prompt with context
-    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(context=context_text)
+        # Get targeted comments using similarity search
+        try:
+            results1 = db.similarity_search_with_score(
+                "summarize youtube comments", k=similarity_k)
+        except Exception as e:
+            print(f"Error during similarity search: {e}")
+            # Fall back to getting all documents
+            results1 = []
 
-    # Use OllamaLLM model
-    print("Generating summary with language model...")
-    model = OllamaLLM(model="llama3.2")
-    response_text = model.invoke(prompt)
+        # Get random comments for diversity
+        import random
+        try:
+            all_docs = db.get()
+            random_indices = random.sample(
+                range(doc_count), min(random_k, doc_count))
+            random_docs = [
+                (Document(page_content=all_docs['documents'][i]), 1.0) for i in random_indices]
+        except Exception as e:
+            print(f"Error getting random documents: {e}")
+            random_docs = []
 
-    # Save the output to a file
-    with open("overall_summary.txt", "w", encoding="utf-8") as f:
-        f.write(response_text)
+        # Combine both sets
+        combined_results = results1 + random_docs
 
-    print("Overall summary saved to overall_summary.txt")
-    return response_text
+        if not combined_results:
+            print("No comments retrieved for summary")
+            return "Unable to generate summary due to data retrieval issues."
+
+        # Build context string from retrieved documents
+        context_text = "\n\n---\n\n".join(
+            [doc.page_content for doc, _score in combined_results])
+
+        # Format prompt with context
+        prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+        prompt = prompt_template.format(context=context_text)
+
+        # Use OllamaLLM model
+        print("Generating summary with language model...")
+        model = OllamaLLM(model="llama3.2")
+        response_text = model.invoke(prompt)
+
+        # Save the output to a file
+        output_dir = os.path.join(CHROMA_PATH, video_id)
+        os.makedirs(output_dir, exist_ok=True)
+        with open(os.path.join(output_dir, "overall_summary.txt"), "w", encoding="utf-8") as f:
+            f.write(response_text)
+
+        print(f"Overall summary saved to {output_dir}/overall_summary.txt")
+        return response_text
+
+    except Exception as e:
+        print(f"Error generating comment summary: {e}")
+        return f"Error generating comment summary: {str(e)}"
 
 
 # ---------------------------------- PREPROCESSING ----------------------------------#
@@ -553,23 +942,54 @@ def preprocess_comment_for_wordcloud(comment_list):
 
 # ---------------------------------- SENTIMENT ANALYSIS ----------------------------------#
 
+# def analyze_sentiment(comments):
+#     inputs = tokenizer(comments, return_tensors="pt",
+#                        padding=True, max_length = 1000,truncation=True)
+#     with torch.no_grad():
+#         outputs = hf_model(**inputs)
+#     predictions = torch.argmax(outputs.logits, dim=1)
+
+#     positives, neutrals, negatives = [], [], []
+#     for comment, label in zip(comments, predictions):
+#         label = label.item()
+#         if label == 2:
+#             positives.append(comment)
+#         elif label == 1:
+#             neutrals.append(comment)
+#         else:
+#             negatives.append(comment)
+
+#     return [len(neutrals), len(positives), len(negatives)], positives, negatives, neutrals
+
 def analyze_sentiment(comments):
-    inputs = tokenizer(comments, return_tensors="pt", padding=True, truncation=True)
-    with torch.no_grad():
-        outputs = hf_model(**inputs)
-    predictions = torch.argmax(outputs.logits, dim=1)
+    """Analyze sentiment of comments using VADER."""
+    # Initialize the sentiment analyzer
+    analyzer = SentimentIntensityAnalyzer()
 
-    positives, neutrals, negatives = [], [], []
-    for comment, label in zip(comments, predictions):
-        label = label.item()
-        if label == 2:
-            positives.append(comment)
-        elif label == 1:
-            neutrals.append(comment)
+    comments_positive = []
+    comments_negative = []
+    comments_neutral = []
+
+    # Count the number of neutral, positive, and negative comments
+    num_neutral = 0
+    num_positive = 0
+    num_negative = 0
+
+    for comment in comments:
+        sentiment_scores = analyzer.polarity_scores(comment)
+        if sentiment_scores['compound'] >= 0.2:
+            num_positive += 1
+            comments_positive.append(comment)
+        elif sentiment_scores['compound'] <= -0.2:
+            num_negative += 1
+            comments_negative.append(comment)
         else:
-            negatives.append(comment)
+            comments_neutral.append(comment)
+            num_neutral += 1
 
-    return [len(neutrals), len(positives), len(negatives)], positives, negatives, neutrals
+    results = [num_neutral, num_positive, num_negative]
+    # Return the results and categorized comments
+    return results, comments_positive, comments_negative, comments_neutral
 
 
 matplotlib.use('Agg')
@@ -702,6 +1122,7 @@ def generate_negative_summary_from_vector(query="Summarize main point of the neg
         "negative_comments": context
     })
 
+
 def reset_sentiment_databases():
     """Reset the in-memory vector stores used for sentiment analysis."""
     global POSITIVE_VECTOR_DB, NEGATIVE_VECTOR_DB, EMBEDDING_MODEL
@@ -710,6 +1131,7 @@ def reset_sentiment_databases():
     # Recreate the vector stores to clear them
     POSITIVE_VECTOR_DB = InMemoryVectorStore(EMBEDDING_MODEL)
     NEGATIVE_VECTOR_DB = InMemoryVectorStore(EMBEDDING_MODEL)
+
 
 def summarize_both_sentiments(positive_comments, negative_comments, output_file="sentiment_summary.txt"):
     # Reset the vector stores before adding new documents
@@ -748,68 +1170,196 @@ def analyze_youtube_comments(youtube_url, api_key="AIzaSyDj7I12G6kpxEt4esWYXh2Xw
     Returns:
         Dictionary with summaries and analysis results
     """
+    # print(f"Analyzing comments for: {youtube_url}")
+
+    # # Extract video ID if full URL is provided
+    # video_id = extract_video_id(youtube_url)
+    # print(f"Extracted video ID: {video_id}")
+
+    # # Step 1: Get comments from YouTube API
+    # print("Fetching comments from YouTube...")
+    # comments = get_comments(video_id, api_key)
+
+    # # Step 2: Save comments to Chroma vector database (reuse if same video)
+    # print("Saving comments to vector database...")
+    # comment_count = save_comments_to_chroma(comments, video_id)
+
+    # # Step 3: Read comments from Chroma
+    # raw_comments = read_comments_from_chroma()
+
+    # # Step 4: Generate overall comment summary
+    # print("Generating overall comment summary...")
+    # overall_summary = generate_comment_summary()
+
+    # # Step 5: Preprocess comments for sentiment analysis
+    # print("Analyzing sentiment...")
+    # processed_comments = preprocess_for_sentiment(raw_comments)
+
+    # # Step 6: Perform sentiment analysis
+    # sentiment_results, positive_comments, negative_comments, neutral_comments = analyze_sentiment(
+    #     processed_comments)
+
+    # print("Positive comments:", positive_comments)
+    # print("Negative comments:", negative_comments)
+    # # Step 7: Create sentiment visualization
+    # print("Creating visualizations...")
+    # sentiment_chart = plot_sentiment_pie_chart(sentiment_results)
+    # sentiment_chart.savefig("sentiment_pie_chart.png")
+
+    # # Step 8: Generate word cloud
+    # wordcloud = generate_wordcloud(raw_comments)
+    # wordcloud.savefig("comment_wordcloud.png")
+
+    # # Step 9: Summarize positive and negative comments
+    # print("Generating sentiment-specific summaries...")
+    # pos_summary, neg_summary = summarize_both_sentiments(
+    #     positive_comments, negative_comments)
+
+    # # Return results
+    # results = {
+    #     "video_id": video_id,
+    #     "comment_count": comment_count,
+    #     "overall_summary": overall_summary,
+    #     "sentiment_counts": {
+    #         "positive": sentiment_results[1],
+    #         "negative": sentiment_results[2],
+    #         "neutral": sentiment_results[0]
+    #     },
+    #     "positive_summary": pos_summary,
+    #     "negative_summary": neg_summary,
+    #     "output_files": {
+    #         "sentiment_chart": "sentiment_pie_chart.png",
+    #         "wordcloud": "comment_wordcloud.png",
+    #         "overall_summary": "overall_summary.txt",
+    #         "sentiment_summary": "sentiment_summary.txt"
+    #     }
+    # }
+
+    # print("\nAnalysis complete! Results saved to output files.")
+    # return results
+
     print(f"Analyzing comments for: {youtube_url}")
+
+    # Create the main Chroma directory if it doesn't exist
+    os.makedirs(CHROMA_PATH, exist_ok=True)
 
     # Extract video ID if full URL is provided
     video_id = extract_video_id(youtube_url)
+    if not video_id:
+        return {
+            "error": "Invalid YouTube URL or video ID"
+        }
+
     print(f"Extracted video ID: {video_id}")
 
     # Step 1: Get comments from YouTube API
-    print("Fetching comments from YouTube...")
-    comments = get_comments(video_id, api_key)
+    try:
+        print("Fetching comments from YouTube...")
+        comments = get_comments(video_id, api_key)
 
-    # Step 2: Save comments to Chroma vector database (reuse if same video)
-    print("Saving comments to vector database...")
-    comment_count = save_comments_to_chroma(comments, video_id)
+        if not comments:
+            return {
+                "video_id": video_id,
+                "error": "No comments found or comments are disabled for this video"
+            }
+    except Exception as e:
+        return {
+            "video_id": video_id,
+            "error": f"Error fetching comments: {str(e)}"
+        }
+
+    # Step 2: Save comments to Chroma vector database
+    try:
+        print("Saving comments to vector database...")
+        comment_count = save_comments_to_chroma(comments, video_id)
+    except Exception as e:
+        return {
+            "video_id": video_id,
+            "error": f"Error saving comments to database: {str(e)}"
+        }
 
     # Step 3: Read comments from Chroma
-    raw_comments = read_comments_from_chroma()
+    try:
+        raw_comments = read_comments_from_chroma(video_id)
+        if not raw_comments:
+            return {
+                "video_id": video_id,
+                "comment_count": comment_count,
+                "error": "Could not retrieve comments from database"
+            }
+    except Exception as e:
+        return {
+            "video_id": video_id,
+            "comment_count": comment_count,
+            "error": f"Error reading comments from database: {str(e)}"
+        }
 
     # Step 4: Generate overall comment summary
-    print("Generating overall comment summary...")
-    overall_summary = generate_comment_summary()
+    try:
+        print("Generating overall comment summary...")
+        overall_summary = generate_comment_summary(video_id)
+    except Exception as e:
+        overall_summary = f"Error generating summary: {str(e)}"
+        print(overall_summary)
 
     # Step 5: Preprocess comments for sentiment analysis
-    print("Analyzing sentiment...")
-    processed_comments = preprocess_for_sentiment(raw_comments)
+    try:
+        print("Analyzing sentiment...")
+        processed_comments = preprocess_for_sentiment(raw_comments)
 
-    # Step 6: Perform sentiment analysis
-    sentiment_results, positive_comments, negative_comments, neutral_comments = analyze_sentiment(
-        processed_comments)
-    
-    print("Positive comments:", positive_comments)
-    print("Negative comments:", negative_comments)
-    # Step 7: Create sentiment visualization
-    print("Creating visualizations...")
-    sentiment_chart = plot_sentiment_pie_chart(sentiment_results)
-    sentiment_chart.savefig("sentiment_pie_chart.png")
+        # Step 6: Perform sentiment analysis
+        sentiment_results, positive_comments, negative_comments, neutral_comments = analyze_sentiment(
+            processed_comments)
 
-    # Step 8: Generate word cloud
-    wordcloud = generate_wordcloud(raw_comments)
-    wordcloud.savefig("comment_wordcloud.png")
+        # Step 7: Create sentiment visualization
+        print("Creating visualizations...")
+        sentiment_chart = plot_sentiment_pie_chart(sentiment_results)
 
-    # Step 9: Summarize positive and negative comments
-    print("Generating sentiment-specific summaries...")
-    pos_summary, neg_summary = summarize_both_sentiments(
-        positive_comments, negative_comments)
+        # Save in video-specific directory
+        chart_dir = os.path.join(CHROMA_PATH, video_id)
+        os.makedirs(chart_dir, exist_ok=True)
+        chart_path = os.path.join(chart_dir, "sentiment_pie_chart.png")
+        sentiment_chart.savefig(chart_path)
+
+        # Step 8: Generate word cloud
+        wordcloud = generate_wordcloud(raw_comments)
+        wordcloud_path = os.path.join(chart_dir, "comment_wordcloud.png")
+        wordcloud.savefig(wordcloud_path)
+
+        # Step 9: Summarize positive and negative comments
+        print("Generating sentiment-specific summaries...")
+        summary_path = os.path.join(chart_dir, "sentiment_summary.txt")
+        pos_summary, neg_summary = summarize_both_sentiments(
+            positive_comments, negative_comments, output_file=summary_path)
+
+        # Save output files in video-specific directory
+        sentiment_summary = {
+            "positive": len(positive_comments),
+            "negative": len(negative_comments),
+            "neutral": len(neutral_comments)
+        }
+    except Exception as e:
+        print(f"Error in sentiment analysis: {e}")
+        sentiment_summary = {"error": str(e)}
+        pos_summary = "Error generating positive summary"
+        neg_summary = "Error generating negative summary"
+        chart_path = None
+        wordcloud_path = None
+        summary_path = None
 
     # Return results
     results = {
         "video_id": video_id,
         "comment_count": comment_count,
         "overall_summary": overall_summary,
-        "sentiment_counts": {
-            "positive": sentiment_results[1],
-            "negative": sentiment_results[2],
-            "neutral": sentiment_results[0]
-        },
+        "sentiment_counts": sentiment_summary,
         "positive_summary": pos_summary,
         "negative_summary": neg_summary,
         "output_files": {
-            "sentiment_chart": "sentiment_pie_chart.png",
-            "wordcloud": "comment_wordcloud.png",
-            "overall_summary": "overall_summary.txt",
-            "sentiment_summary": "sentiment_summary.txt"
+            "sentiment_chart": chart_path,
+            "wordcloud": wordcloud_path,
+            "overall_summary": os.path.join(CHROMA_PATH, video_id, "overall_summary.txt"),
+            "sentiment_summary": summary_path
         }
     }
 
@@ -825,7 +1375,8 @@ if __name__ == "__main__":
         "youtube_url", help="YouTube URL or video ID to analyze")
     parser.add_argument("--api-key", default="AIzaSyDj7I12G6kpxEt4esWYXh2XwVAOXu7mbz0",
                         help="YouTube API key (optional)")
-    parser.add_argument("--question", help="Ask a specific question about the comments")
+    parser.add_argument(
+        "--question", help="Ask a specific question about the comments")
     parser.add_argument("--k", type=int, default=None,
                         help="Number of comments to retrieve for context (default: auto-calculated)")
     parser.add_argument("--reuse-db", action="store_true",
@@ -872,4 +1423,5 @@ if __name__ == "__main__":
                 print(f"- {name}: {path}")
         else:
             print("To perform a new analysis, run without the --reuse-db flag.")
-            print("To ask a question about the existing analysis, use the --question parameter.")
+            print(
+                "To ask a question about the existing analysis, use the --question parameter.")
