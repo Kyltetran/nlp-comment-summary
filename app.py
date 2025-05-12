@@ -1,4 +1,4 @@
-from youtube_summary_tool import analyze_youtube_comments, answer_question, extract_video_id, CURRENT_VIDEO_ID, \
+from youtube_summary_tool_copy import analyze_youtube_comments, answer_question, extract_video_id, CURRENT_VIDEO_ID, \
     close_chroma_connection
 from flask import Flask, request, jsonify, send_from_directory, render_template
 import os
