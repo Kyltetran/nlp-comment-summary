@@ -19,3 +19,6 @@ emoji
 langchain_core
 langchain_ollama
 langchain_community
+torch
+transformers
+ml-dtypes
