@@ -22,3 +22,4 @@ langchain_community
 torch
 transformers
 ml-dtypes
+pysqlite3-binary
