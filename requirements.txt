@@ -9,7 +9,7 @@ pandas
 nltk
 streamlit
 colorama
-protobuf
+protobuf==3.20.3
 plotly
 matplotlib
 wordcloud
