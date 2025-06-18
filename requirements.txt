@@ -1,7 +1,44 @@
+# google-api-python-client
+# langchain
+# langchain_chroma
+# langchain-ollama
+# python-dotenv
+# flask
+# flask-cors
+# pandas
+# nltk
+# streamlit
+# colorama
+# protobuf==3.20.3
+# plotly
+# matplotlib
+# wordcloud
+# unidecode 
+# langdetect 
+# emoji
+# langchain_core
+# langchain_ollama
+# langchain_community
+# torch
+# transformers
+# ml-dtypes
+# pysqlite3-binary
+
+# Core
+langchain==0.1.16
+langchain_core==0.1.51
+langchain_community==0.0.34
+langchain_ollama==0.0.6
+langchain_chroma==0.0.8
+
+# Chroma version compatible with langchain_chroma
+chromadb==0.4.24
+
+# SQLite compatibility
+pysqlite3-binary==0.5.2.post2
+
+# Other dependencies
 google-api-python-client
-langchain
-langchain_chroma
-langchain-ollama
 python-dotenv
 flask
 flask-cors
@@ -13,13 +50,9 @@ protobuf==3.20.3
 plotly
 matplotlib
 wordcloud
-unidecode 
-langdetect 
+unidecode
+langdetect
 emoji
-langchain_core
-langchain_ollama
-langchain_community
 torch
 transformers
 ml-dtypes
-pysqlite3-binary
