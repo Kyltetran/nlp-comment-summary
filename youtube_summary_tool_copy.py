@@ -834,9 +834,9 @@ def generate_comment_summary(video_id=None):
 
         Please write a summary highlighting the key points and general sentiment expressed in these comments.
         Focus on providing a well-rounded overview in less than 5 paragraphs.
-        
-        IMPORTANT: Make sure to cover diverse topics from the comments. Do not focus too much on any single 
-        topic or theme, even if many comments discuss it. Instead, try to capture the overall breadth of 
+
+        IMPORTANT: Make sure to cover diverse topics from the comments. Do not focus too much on any single
+        topic or theme, even if many comments discuss it. Instead, try to capture the overall breadth of
         topics and opinions present across ALL comments.
         """
 
@@ -1112,7 +1112,7 @@ def generate_positive_summary_from_vector(query="Summarize main point of these c
     Start the summary with bullet points right away, and do not include any other text.
     Note that just include 0-3 main points.
     Do not include any negative comments or neutral comments in the summary if they are present.
-    
+
     """
     docs = find_related_positive(query)
     context = "\n".join([doc.page_content for doc in docs])
