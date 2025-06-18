@@ -1,13 +1,16 @@
-
-import time
-import json
+import sqlite_patch  # 👈 This must come first
 import os
-from youtube_summary_tool_copy import analyze_youtube_comments, answer_question, extract_video_id, CURRENT_VIDEO_ID, \
-    close_chroma_connection
+import json
+import time
 import streamlit as st
-import sys
-import pysqlite3
-sys.modules["sqlite3"] = pysqlite3
+from youtube_summary_tool_copy import (
+    analyze_youtube_comments,
+    answer_question,
+    extract_video_id,
+    CURRENT_VIDEO_ID,
+    close_chroma_connection
+)
+
 
 # Set Streamlit page config
 st.set_page_config(page_title="YouTube Comment Analyzer", layout="centered")
